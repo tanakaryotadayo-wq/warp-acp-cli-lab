@@ -196,12 +196,6 @@ export interface ICommonNativeHostService {
 	// Screenshots
 	getScreenshot(rect?: IRectangle): Promise<VSBuffer | undefined>;
 
-	// Git (for gist upload POC)
-	runGitCommand(args: string[], cwd?: string, timeout?: number): Promise<{ stdout: string; stderr: string }>;
-	writeFileToPath(filePath: string, data: VSBuffer): Promise<void>;
-	makeTempDir(prefix: string): Promise<string>;
-	removeTempDir(dirPath: string): Promise<void>;
-
 	// GitHub mobile upload API (runs in main process to avoid CORS)
 	uploadFileViaMobileApi(token: string, repoId: string, fileName: string, fileBytes: VSBuffer, contentType: string): Promise<{ fileName: string; assetUrl: string; contentType: string }>;
 

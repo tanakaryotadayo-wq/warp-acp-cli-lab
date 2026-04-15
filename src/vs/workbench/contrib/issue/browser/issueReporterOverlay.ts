@@ -1134,20 +1134,6 @@ export class IssueReporterOverlay {
 		return this.wizardPanel.offsetHeight + this.resizeSash.offsetHeight;
 	}
 
-	hideForCapture(): void {
-		// Fully collapse the wizard so the workbench fills the entire window
-		this.wizardPanel.style.display = 'none';
-		this.resizeSash.style.display = 'none';
-		// Force layout reflow
-		this.layoutService.layout();
-	}
-
-	showAfterCapture(): void {
-		this.wizardPanel.style.display = '';
-		this.resizeSash.style.display = '';
-		this.layoutService.layout();
-	}
-
 	setRecordingState(state: RecordingState): void {
 		this.currentRecordingState = state;
 

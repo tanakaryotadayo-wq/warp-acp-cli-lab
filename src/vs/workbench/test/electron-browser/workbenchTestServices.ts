@@ -185,10 +185,6 @@ export class TestNativeHostService implements INativeHostService {
 	async createZipFile(zipPath: URI, files: { path: string; contents: string }[]): Promise<void> { }
 	async profileRenderer(): Promise<any> { throw new Error(); }
 	async getScreenshot(rect?: IRectangle): Promise<VSBuffer | undefined> { return undefined; }
-	async runGitCommand(): Promise<{ stdout: string; stderr: string }> { return { stdout: '', stderr: '' }; }
-	async writeFileToPath(): Promise<void> { }
-	async makeTempDir(): Promise<string> { return ''; }
-	async removeTempDir(): Promise<void> { }
 	async uploadFileViaMobileApi(): Promise<{ fileName: string; assetUrl: string; contentType: string }> { return { fileName: '', assetUrl: '', contentType: '' }; }
 	async showToast(options: IToastOptions): Promise<IToastResult> { return { supported: false, clicked: false }; }
 	async clearToast(id: string): Promise<void> { }
