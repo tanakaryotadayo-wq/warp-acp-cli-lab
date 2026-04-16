@@ -489,6 +489,21 @@
 				"Write-Output \"134 passed, 0 failed, 1 skipped, 135 total\"; Start-Sleep -Seconds 2; Write-Output \"[PASS] E2E Tests\"; Write-Output \"Watching for changes...\""
 			],
 			"isBackground": false
+		},
+		{
+			"label": "Gemini Code Assist - Start Bridge",
+			"type": "shell",
+			"command": "/bin/bash",
+			"args": [
+				"${workspaceFolder}/extensions/ryota-core.vortex-critic/assets/gemini/bootstrap_gemini_code_assist.sh",
+				"--workspace-root",
+				"${workspaceFolder}",
+				"--status-file",
+				"${workspaceFolder}/.build/ryota/gemini-code-assist/status.json",
+				"--port",
+				"8765"
+			],
+			"problemMatcher": []
 		}
 	]
 }

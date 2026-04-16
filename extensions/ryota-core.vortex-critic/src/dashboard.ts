@@ -313,6 +313,7 @@ export function getDashboardHtml(extensionUri: vscode.Uri, logDir: string, getSt
         <div class="actions">
             <button class="btn" onclick="postMessage('refresh')">🔄 Refresh</button>
             <button class="btn btn-primary" onclick="postMessage('runAudit')">⚡ Run Audit</button>
+            <button class="btn" onclick="postMessage('startGeminiBridge')">🚀 Gemini Bridge 起動</button>
             <button class="btn" onclick="postMessage('packetizeAntigravity')">📦 Antigravity Packet 抽出</button>
             <button class="btn" onclick="postMessage('runPipelineOne')">🧬 Pipeline① 開始</button>
         </div>
@@ -355,7 +356,7 @@ export function getDashboardHtml(extensionUri: vscode.Uri, logDir: string, getSt
         </div>
 
         <div class="card">
-            <h3>Newgate 接続</h3>
+            <h3>Gemini Bridge / Newgate</h3>
             <div class="critic-panel">
                 <div>
                     <span style="color: var(--text-muted); font-size: 0.8em;">Bridge:</span>
@@ -380,8 +381,9 @@ export function getDashboardHtml(extensionUri: vscode.Uri, logDir: string, getSt
             </div>
             <div class="log-result" style="margin-top: 12px;">${newgateBridgeLabel}</div>
             ${newgate.error ? `<div style="margin-top: 8px; color: var(--warning); font-size: 0.8em;">${newgate.error}</div>` : ''}
-            <div style="margin-top: 12px;">
-                <button class="btn" onclick="postMessage('openNewgate')">🧠 Newgate Snapshot を開く</button>
+            <div class="actions" style="margin-top: 12px;">
+                <button class="btn" onclick="postMessage('startGeminiBridge')">🚀 Bridge 起動</button>
+                <button class="btn" onclick="postMessage('openGeminiBridge')">📡 Bridge Snapshot</button>
             </div>
         </div>
 

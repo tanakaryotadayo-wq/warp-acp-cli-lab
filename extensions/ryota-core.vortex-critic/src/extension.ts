@@ -52,6 +52,7 @@ const DEFAULT_PIPELINE_ONE_RUNNER_SCRIPT = path.join(
   process.env.HOME ?? '/Users/ryyota',
   'fusion-gate/scripts/pipeline_01_runner.py'
 );
+const DEFAULT_GEMINI_BRIDGE_PORT = 8765;
 const DEFAULT_ANTIGRAVITY_EXTENSIONS_DIR = path.join(
   process.env.HOME ?? '/Users/ryyota',
   '.antigravity/extensions'
@@ -124,6 +125,10 @@ interface PipelineOneStatus {
   error?: string;
 }
 
+function getWorkspaceRoot(): string {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? DEFAULT_PIPELINE_ONE_REPO_PATH;
+}
+
 function getKiQueueFile(): string {
   return vscode.workspace.getConfiguration('vortex').get<string>('kiQueueFile')?.trim() || DEFAULT_KI_QUEUE_FILE;
 }
@@ -166,6 +171,33 @@ function getPipelineOneBootstrapScript(): string {
 
 function getPipelineOneRunnerScript(): string {
   return vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneRunnerScript')?.trim() || DEFAULT_PIPELINE_ONE_RUNNER_SCRIPT;
+}
+
+function getGeminiBridgePort(): number {
+  const configured = vscode.workspace.getConfiguration('vortex').get<number>('geminiBridgePort');
+  return configured && Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_GEMINI_BRIDGE_PORT;
+}
+
+function getGeminiBridgeStatusPath(): string {
+  return vscode.workspace.getConfiguration('vortex').get<string>('geminiBridgeStatusPath')?.trim()
+    || path.join(getWorkspaceRoot(), '.build/ryota/gemini-code-assist/status.json');
+}
+
+function getGeminiBridgeBootstrapScript(context: vscode.ExtensionContext): string {
+  const configured = vscode.workspace.getConfiguration('vortex').get<string>('geminiBridgeBootstrapScript')?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  const workspaceCandidate = path.join(
+    getWorkspaceRoot(),
+    'extensions/ryota-core.vortex-critic/assets/gemini/bootstrap_gemini_code_assist.sh'
+  );
+  if (fs.existsSync(workspaceCandidate)) {
+    return workspaceCandidate;
+  }
+
+  return path.join(context.extensionPath, 'assets', 'gemini', 'bootstrap_gemini_code_assist.sh');
 }
 
 function slugifyKiName(value: string, fallback = 'ki_candidate'): string {
@@ -639,6 +671,61 @@ async function runPipelineOneScripts(): Promise<{ stdout: string; stderr: string
   };
 }
 
+async function runGeminiBridgeBootstrap(context: vscode.ExtensionContext): Promise<{ stdout: string; stderr: string; statusPath: string }> {
+  const bootstrapScript = getGeminiBridgeBootstrapScript(context);
+  const statusPath = getGeminiBridgeStatusPath();
+  const workspaceRoot = getWorkspaceRoot();
+  const port = String(getGeminiBridgePort());
+
+  if (!fs.existsSync(bootstrapScript)) {
+    throw new Error(`gemini bridge bootstrap script not found: ${bootstrapScript}`);
+  }
+
+  return new Promise<{ stdout: string; stderr: string; statusPath: string }>((resolve, reject) => {
+    const proc = cp.spawn('/bin/bash', [
+      bootstrapScript,
+      '--workspace-root', workspaceRoot,
+      '--status-file', statusPath,
+      '--port', port,
+    ], {
+      cwd: path.dirname(bootstrapScript),
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        proc.kill();
+        reject(new Error('Gemini bridge bootstrap timed out after 30s'));
+      }
+    }, 30000);
+
+    proc.stdout.on('data', (data) => { stdout += data.toString(); });
+    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+    proc.on('error', (error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+    proc.on('close', (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({ stdout, stderr, statusPath });
+      } else {
+        reject(new Error(stderr.trim() || stdout.trim() || `gemini bridge bootstrap exited with code ${code}`));
+      }
+    });
+  });
+}
+
 // ── Sidebar: Webview Provider ───────────────────────────────────────────────
 
 class VortexSidebarProvider implements vscode.WebviewViewProvider {
@@ -675,6 +762,10 @@ class VortexSidebarProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('vortex.runAudit');
       } else if (msg.command === 'packetizeAntigravity') {
         vscode.commands.executeCommand('vortex.packetizeAntigravity');
+      } else if (msg.command === 'startGeminiBridge') {
+        vscode.commands.executeCommand('vortex.startGeminiBridge');
+      } else if (msg.command === 'openGeminiBridge') {
+        vscode.commands.executeCommand('vortex.openGeminiBridgeSnapshot');
       } else if (msg.command === 'openNewgate') {
         vscode.commands.executeCommand('vortex.openNewgateSnapshot');
       } else if (msg.command === 'openKiQueue') {
@@ -699,6 +790,7 @@ class VortexSidebarProvider implements vscode.WebviewViewProvider {
         lastVerdict: lastAuditResult?.verdict || null,
         newgate: await fetchNewgateStatus(),
         kiQueue: await fetchKiQueueStatus(),
+        pipelineOne: await fetchPipelineOneStatus(),
       };
       this._view.webview.html = getDashboardHtml(this._extensionUri, FLEET_LOG_DIR, () => status);
     }
@@ -894,6 +986,58 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('vortex.refreshSidebar', () => {
       void sidebarProvider.refresh();
+    }),
+
+    vscode.commands.registerCommand('vortex.startGeminiBridge', async () => {
+      const channel = vscode.window.createOutputChannel('VORTEX Gemini Bridge');
+      channel.clear();
+      channel.appendLine('=== Gemini Code Assist A2A Bridge ===');
+      channel.appendLine(`workspaceRoot: ${getWorkspaceRoot()}`);
+      channel.appendLine(`statusPath: ${getGeminiBridgeStatusPath()}`);
+      channel.appendLine(`bridgeUrl: http://127.0.0.1:${getGeminiBridgePort()}`);
+
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: '🚀 Gemini Code Assist Bridge を起動中...' },
+        async () => {
+          try {
+            const result = await runGeminiBridgeBootstrap(context);
+            if (result.stdout.trim()) {
+              channel.appendLine(result.stdout.trim());
+            }
+            if (result.stderr.trim()) {
+              channel.appendLine('\n--- STDERR ---');
+              channel.appendLine(result.stderr.trim());
+            }
+            channel.show(true);
+            if (fs.existsSync(result.statusPath)) {
+              const doc = await vscode.workspace.openTextDocument(result.statusPath);
+              await vscode.window.showTextDocument(doc, { preview: false });
+            }
+            void sidebarProvider.refresh();
+            vscode.window.showInformationMessage('Gemini Code Assist Bridge を起動しました');
+          } catch (error: any) {
+            channel.appendLine('\n--- ERROR ---');
+            channel.appendLine(String(error?.message ?? error));
+            channel.show(true);
+            void sidebarProvider.refresh();
+            vscode.window.showErrorMessage(`Gemini Bridge の起動に失敗: ${error?.message ?? error}`);
+          }
+        }
+      );
+    }),
+
+    vscode.commands.registerCommand('vortex.openGeminiBridgeSnapshot', async () => {
+      const payload: any = {
+        bridge: fs.existsSync(getGeminiBridgeStatusPath())
+          ? JSON.parse(fs.readFileSync(getGeminiBridgeStatusPath(), 'utf-8'))
+          : null,
+        newgate: await fetchNewgateStatus(),
+      };
+      const doc = await vscode.workspace.openTextDocument({
+        language: 'json',
+        content: JSON.stringify(payload, null, 2),
+      });
+      await vscode.window.showTextDocument(doc, { preview: false });
     }),
 
     vscode.commands.registerCommand('vortex.openNewgateSnapshot', async () => {

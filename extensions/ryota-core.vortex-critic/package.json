@@ -67,6 +67,16 @@
         "icon": "$(light-bulb)"
       },
       {
+        "command": "vortex.startGeminiBridge",
+        "title": "VORTEX: Gemini Code Assist Bridge を起動",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "vortex.openGeminiBridgeSnapshot",
+        "title": "VORTEX: Gemini Bridge Snapshot を開く",
+        "icon": "$(radio-tower)"
+      },
+      {
         "command": "vortex.runPipelineOne",
         "title": "VORTEX: Pipeline① を起動",
         "icon": "$(play)"
@@ -207,6 +217,21 @@
           "type": "string",
           "default": "",
           "description": "Pipeline① runner script のパス（空なら ~/fusion-gate/scripts/pipeline_01_runner.py）"
+        },
+        "vortex.geminiBridgeBootstrapScript": {
+          "type": "string",
+          "default": "",
+          "description": "Gemini Code Assist bridge bootstrap script のパス（空なら bundled asset を使用）"
+        },
+        "vortex.geminiBridgeStatusPath": {
+          "type": "string",
+          "default": "",
+          "description": "Gemini Code Assist bridge status JSON のパス（空なら workspace/.build/ryota/gemini-code-assist/status.json）"
+        },
+        "vortex.geminiBridgePort": {
+          "type": "number",
+          "default": 8765,
+          "description": "Gemini Code Assist bridge の待受ポート"
         }
       }
     }

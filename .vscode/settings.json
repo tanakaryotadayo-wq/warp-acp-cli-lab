@@ -184,6 +184,8 @@
 		}
 	],
 	// --- Tools ---
+	"geminicodeassist.a2a.address": "http://127.0.0.1:8765",
+	"geminicodeassist.enableTelemetry": false,
 	"npm.exclude": "**/extensions/**",
 	"eslint.useFlatConfig": true,
 	"emmet.excludeLanguages": [],
