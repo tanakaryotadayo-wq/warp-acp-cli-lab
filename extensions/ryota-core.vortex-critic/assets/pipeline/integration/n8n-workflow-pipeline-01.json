@@ -1,0 +1,60 @@
+{
+  "name": "Pipeline 1 - OSS Packet Loop",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual_trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 260]
+    },
+    {
+      "parameters": {
+        "path": "pipeline-01",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook_trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 420]
+    },
+    {
+      "parameters": {
+        "command": "=/bin/bash /Users/ryyota/fusion-gate/scripts/bootstrap_pipeline_01.sh"
+      },
+      "id": "bootstrap_pipeline",
+      "name": "Bootstrap Pipeline 1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [520, 340]
+    },
+    {
+      "parameters": {
+        "command": "=python3 /Users/ryyota/fusion-gate/scripts/pipeline_01_runner.py --repo-path {{$json.repoPath || '/Users/ryyota/vscode-oss'}} --repo-name {{$json.repoName || 'vscode-oss'}} --mount-path {{$json.mountPath || '/Users/ryyota/GoogleDriveCache/oss'}}"
+      },
+      "id": "run_pipeline",
+      "name": "Run Pipeline 1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [800, 340]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Bootstrap Pipeline 1", "type": "main", "index": 0 }]]
+    },
+    "Webhook Trigger": {
+      "main": [[{ "node": "Bootstrap Pipeline 1", "type": "main", "index": 0 }]]
+    },
+    "Bootstrap Pipeline 1": {
+      "main": [[{ "node": "Run Pipeline 1", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
