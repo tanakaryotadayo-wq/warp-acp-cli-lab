@@ -1,0 +1,244 @@
+{
+  "name": "Newgate Cognitive Engine",
+  "version": "2.1",
+  "updated": "2026-04-15",
+  "workspace": "/Users/ryyota/vscode-oss/",
+  "source": "OSS deployment of Session 4 summary + Mac Studio supplement",
+  "scale": {
+    "layers": 4,
+    "modules": 25,
+    "approxCodeLines": 20005,
+    "deepReadComplete": true,
+    "tests": {
+      "files": 10,
+      "approxLines": 4391,
+      "status": "confirmed"
+    }
+  },
+  "readthrough": [
+    {
+      "layer": "gate/",
+      "modules": 4,
+      "lines": 5528,
+      "status": "done"
+    },
+    {
+      "layer": "intelligence/",
+      "modules": 8,
+      "lines": 5341,
+      "status": "done"
+    },
+    {
+      "layer": "integration/",
+      "modules": 6,
+      "lines": 6097,
+      "status": "done"
+    },
+    {
+      "layer": "root",
+      "modules": 7,
+      "lines": 3039,
+      "status": "done"
+    },
+    {
+      "layer": "tests/",
+      "modules": 10,
+      "lines": 4391,
+      "status": "confirmed"
+    }
+  ],
+  "embedding": {
+    "primaryModel": "qwen3-embedding-8b",
+    "dimensions": 4096,
+    "status": "validated",
+    "reason": "可変長でコード検索性能が高く、NV-Embed-v2 の役割を置き換える前提。",
+    "previousCandidate": "NV-Embed-v2"
+  },
+  "kiVectorization": {
+    "artifacts": 244,
+    "characters": 1300000,
+    "chunks": 314,
+    "outputFile": "ki_vectors_8B.jsonl",
+    "outputSizeMB": 27.7,
+    "runtimeSeconds": 344.9,
+    "machine": "Mac Studio M3 Ultra",
+    "result": "0.6B より Qwen3-Embedding-8B が圧勝。code/vector/attack vector の区別も安定。"
+  },
+  "memory": {
+    "recall": {
+      "status": "implemented",
+      "hook": "sovereign_recall_hook.sh",
+      "location": "defaultIntentRequestHandler.ts::_executeSovereignHook",
+      "execution": "async spawn",
+      "timeoutSeconds": 10
+    },
+    "store": {
+      "status": "pending",
+      "goal": "会話終了時の自動パケット化とインデックス反映"
+    },
+    "fileFirstPipeline": {
+      "principle": "session-first ではなく file-first",
+      "raw": {
+        "status": "existing",
+        "description": "brain/ ログと CLI 出力を全部保存"
+      },
+      "normalized": {
+        "status": "pending",
+        "description": "サブエージェント蒸留で重複除去・要約・判断抽出"
+      },
+      "ki": {
+        "status": "manual-existing",
+        "description": "~/.gemini/antigravity/knowledge/"
+      },
+      "search": {
+        "status": "existing",
+        "description": "Qwen3-Embedding-8B 4096d + memory recall"
+      },
+      "ui": {
+        "status": "pending",
+        "description": "VS Code KI browser"
+      }
+    }
+  },
+  "competition": {
+    "replaceable": [
+      {
+        "module": "fusion_gate.py routing",
+        "alternative": "LiteLLM",
+        "replaceability": 80,
+        "gap": "100+ provider support と枯れた edge case"
+      },
+      {
+        "module": "embedding2_vectorizer.py",
+        "alternative": "sentence-transformers + Qdrant",
+        "replaceability": 75,
+        "gap": "HNSW と metadata filter"
+      },
+      {
+        "module": "conversation_memory.py base",
+        "alternative": "Mem0",
+        "replaceability": 70,
+        "gap": "conflict resolution"
+      },
+      {
+        "module": "orchestrator.py base",
+        "alternative": "LangGraph",
+        "replaceability": 65,
+        "gap": "state machine と checkpoint"
+      }
+    ],
+    "partial": [
+      {
+        "module": "vector_proxy.py L0-L2",
+        "alternative": "Guardrails AI + NeMo",
+        "replaceability": 50,
+        "gap": "embedding 意図照合なし"
+      },
+      {
+        "module": "pcc_router.py output audit",
+        "alternative": "DSPy",
+        "replaceability": 40,
+        "gap": "迎合/感情漏れ検知なし"
+      },
+      {
+        "module": "success_registry.py",
+        "alternative": "LangSmith / Braintrust",
+        "replaceability": 45,
+        "gap": "失敗から制約を自動生成しない"
+      }
+    ],
+    "uniqueIp": [
+      {
+        "module": "semantic_delta.py",
+        "replaceability": 15,
+        "why": "意味変化を差分ベクトルで保存し逆算復元する発想そのものが希少"
+      },
+      {
+        "module": "neural_packet.py Root L0",
+        "replaceability": 20,
+        "why": "L0 座標固定とドリフト追跡の統合がない"
+      },
+      {
+        "module": "pcc_router.py 9-axis coordinate",
+        "replaceability": 10,
+        "why": "座標→プロトコル→数値監査までの一貫系がない"
+      },
+      {
+        "module": "BlackHoleDrift",
+        "replaceability": 5,
+        "why": "セッション重心のじわじわドリフト検知が既製品でほぼ不在"
+      },
+      {
+        "module": "Integrated pipeline",
+        "replaceability": 0,
+        "why": "PCC→VectorProxy→FusionGate→SemanticDelta→失敗学習ループ全体"
+      }
+    ]
+  },
+  "priorities": [
+    {
+      "id": "A",
+      "priority": "P1",
+      "title": "車輪の再発明を捨てる",
+      "goal": "fusion_gate.py routing を LiteLLM ラッパー化",
+      "note": "PCC/VectorProxy 注入レイヤーは維持"
+    },
+    {
+      "id": "B",
+      "priority": "P0",
+      "title": "Semantic Delta の定量証明",
+      "goal": "Δベクトル復元、68969 パケット相関、RAG A/B テスト"
+    },
+    {
+      "id": "C",
+      "priority": "P0",
+      "title": "自動記憶形成",
+      "goal": "会話終了時の自動パケット化と週次再ベクトル化"
+    },
+    {
+      "id": "D",
+      "priority": "P1",
+      "title": "PCC 自動チューニング",
+      "goal": "PCCHistory + audit_output で座標微調整"
+    },
+    {
+      "id": "E",
+      "priority": "P2",
+      "title": "BlackHoleDrift 実証",
+      "goal": "Red Team と閾値調整"
+    },
+    {
+      "id": "F",
+      "priority": "P2",
+      "title": "ベクトル DB 選定",
+      "goal": "当面 numpy brute-force、将来 DB 選定"
+    },
+    {
+      "id": "G",
+      "priority": "P3",
+      "title": "2つのNewgate問題",
+      "goal": "Mac Studio を single source of truth に固定"
+    }
+  ],
+  "routing": {
+    "deepCritic": "gemini-3.1-pro-preview + PCC #探",
+    "fastReview": "gemini-2.5-flash + PCC #探",
+    "builder": "Claude Opus / Sonnet",
+    "localSecretWork": "Qwen3 Coder 80B",
+    "background": "Jules",
+    "operationalRule": "ACP は接続手段であり、効いている本体は PCC 注入"
+  },
+  "validatedFacts": [
+    "PCC #探 は迎合を強く抑制し、3 モデル比較で sycophancy 0.0 を実証",
+    "Gemini 3.1 Pro は critic、Claude は builder という役割分担が妥当",
+    "--approval-mode plan がない Gemini CLI は tool use でハングしやすい",
+    "Firebase Studio 展開では Gemini Code Assist のガワ流用が有望",
+    "Google Drive 30TB は raw ログ保管庫として使える"
+  ],
+  "vision": [
+    "コアIPは自作のまま磨く",
+    "インフラ層は既存の枯れた道具に乗せる",
+    "自動化で人間の介入を最小化する",
+    "価値を定量ベンチマークで語れる状態にする"
+  ]
+}
