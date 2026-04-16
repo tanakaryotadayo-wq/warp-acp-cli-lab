@@ -206,17 +206,17 @@
         "vortex.pipelineOneStatusPath": {
           "type": "string",
           "default": "",
-          "description": "Pipeline① status JSON のパス（空なら ~/fusion-gate/data/pipeline_01/status.json）"
+          "description": "Pipeline① status JSON のパス（空なら workspace/.build/ryota/pipeline_01/status.json）"
         },
         "vortex.pipelineOneBootstrapScript": {
           "type": "string",
           "default": "",
-          "description": "Pipeline① bootstrap script のパス（空なら ~/fusion-gate/scripts/bootstrap_pipeline_01.sh）"
+          "description": "Pipeline① bootstrap script のパス（空なら bundled asset を使用）"
         },
         "vortex.pipelineOneRunnerScript": {
           "type": "string",
           "default": "",
-          "description": "Pipeline① runner script のパス（空なら ~/fusion-gate/scripts/pipeline_01_runner.py）"
+          "description": "Pipeline① runner script のパス（空なら bundled asset を使用）"
         },
         "vortex.geminiBridgeBootstrapScript": {
           "type": "string",

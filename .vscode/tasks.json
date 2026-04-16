@@ -504,6 +504,16 @@
 				"8765"
 			],
 			"problemMatcher": []
+		},
+		{
+			"label": "Pipeline 1 - Run Localized",
+			"type": "shell",
+			"command": "/bin/bash",
+			"args": [
+				"-lc",
+				"STATE_DIR='${workspaceFolder}/.build/ryota/pipeline_01'; STATUS_FILE=\"$STATE_DIR/status.json\"; export PIPELINE_01_STATE_DIR=\"$STATE_DIR\" PIPELINE_01_STATUS_FILE=\"$STATUS_FILE\"; /bin/bash '${workspaceFolder}/extensions/ryota-core.vortex-critic/assets/pipeline/scripts/bootstrap_pipeline_01.sh' && python3 '${workspaceFolder}/extensions/ryota-core.vortex-critic/assets/pipeline/scripts/pipeline_01_runner.py' --repo-path '${workspaceFolder}' --repo-name 'vscode-oss' --state-dir \"$STATE_DIR\" --packet-db \"$STATE_DIR/oss_packets.db\" --issue-db \"$STATE_DIR/issue_packets.db\" --status-path \"$STATUS_FILE\""
+			],
+			"problemMatcher": []
 		}
 	]
 }

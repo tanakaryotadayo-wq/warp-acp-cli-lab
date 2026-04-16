@@ -40,18 +40,6 @@ const DEFAULT_PIPELINE_ONE_REPO_PATH = path.join(
   process.env.HOME ?? '/Users/ryyota',
   'vscode-oss'
 );
-const DEFAULT_PIPELINE_ONE_STATUS_PATH = path.join(
-  process.env.HOME ?? '/Users/ryyota',
-  'fusion-gate/data/pipeline_01/status.json'
-);
-const DEFAULT_PIPELINE_ONE_BOOTSTRAP_SCRIPT = path.join(
-  process.env.HOME ?? '/Users/ryyota',
-  'fusion-gate/scripts/bootstrap_pipeline_01.sh'
-);
-const DEFAULT_PIPELINE_ONE_RUNNER_SCRIPT = path.join(
-  process.env.HOME ?? '/Users/ryyota',
-  'fusion-gate/scripts/pipeline_01_runner.py'
-);
 const DEFAULT_GEMINI_BRIDGE_PORT = 8765;
 const DEFAULT_ANTIGRAVITY_EXTENSIONS_DIR = path.join(
   process.env.HOME ?? '/Users/ryyota',
@@ -162,15 +150,46 @@ function getPipelineOneRepoPath(): string {
 }
 
 function getPipelineOneStatusPath(): string {
-  return vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneStatusPath')?.trim() || DEFAULT_PIPELINE_ONE_STATUS_PATH;
+  return vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneStatusPath')?.trim()
+    || path.join(getWorkspaceRoot(), '.build/ryota/pipeline_01/status.json');
 }
 
-function getPipelineOneBootstrapScript(): string {
-  return vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneBootstrapScript')?.trim() || DEFAULT_PIPELINE_ONE_BOOTSTRAP_SCRIPT;
+function getPipelineOneStateDir(): string {
+  return path.dirname(getPipelineOneStatusPath());
 }
 
-function getPipelineOneRunnerScript(): string {
-  return vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneRunnerScript')?.trim() || DEFAULT_PIPELINE_ONE_RUNNER_SCRIPT;
+function getPipelineOneBootstrapScript(context: vscode.ExtensionContext): string {
+  const configured = vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneBootstrapScript')?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  const workspaceCandidate = path.join(
+    getWorkspaceRoot(),
+    'extensions/ryota-core.vortex-critic/assets/pipeline/scripts/bootstrap_pipeline_01.sh'
+  );
+  if (fs.existsSync(workspaceCandidate)) {
+    return workspaceCandidate;
+  }
+
+  return path.join(context.extensionPath, 'assets', 'pipeline', 'scripts', 'bootstrap_pipeline_01.sh');
+}
+
+function getPipelineOneRunnerScript(context: vscode.ExtensionContext): string {
+  const configured = vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneRunnerScript')?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  const workspaceCandidate = path.join(
+    getWorkspaceRoot(),
+    'extensions/ryota-core.vortex-critic/assets/pipeline/scripts/pipeline_01_runner.py'
+  );
+  if (fs.existsSync(workspaceCandidate)) {
+    return workspaceCandidate;
+  }
+
+  return path.join(context.extensionPath, 'assets', 'pipeline', 'scripts', 'pipeline_01_runner.py');
 }
 
 function getGeminiBridgePort(): number {
@@ -601,11 +620,14 @@ async function runAntigravityPacketHarvest(): Promise<PacketHarvestResult> {
   });
 }
 
-async function runPipelineOneScripts(): Promise<{ stdout: string; stderr: string; statusPath: string }> {
-  const bootstrapScript = getPipelineOneBootstrapScript();
-  const runnerScript = getPipelineOneRunnerScript();
+async function runPipelineOneScripts(context: vscode.ExtensionContext): Promise<{ stdout: string; stderr: string; statusPath: string }> {
+  const bootstrapScript = getPipelineOneBootstrapScript(context);
+  const runnerScript = getPipelineOneRunnerScript(context);
   const statusPath = getPipelineOneStatusPath();
+  const stateDir = getPipelineOneStateDir();
   const repoPath = getPipelineOneRepoPath();
+  const packetDb = path.join(stateDir, 'oss_packets.db');
+  const issueDb = path.join(stateDir, 'issue_packets.db');
 
   if (!fs.existsSync(bootstrapScript)) {
     throw new Error(`pipeline bootstrap script not found: ${bootstrapScript}`);
@@ -614,9 +636,9 @@ async function runPipelineOneScripts(): Promise<{ stdout: string; stderr: string
     throw new Error(`pipeline runner script not found: ${runnerScript}`);
   }
 
-  const runProcess = (command: string, args: string[], cwd: string, timeoutMs: number) =>
+  const runProcess = (command: string, args: string[], cwd: string, timeoutMs: number, env?: NodeJS.ProcessEnv) =>
     new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const proc = cp.spawn(command, args, { cwd });
+      const proc = cp.spawn(command, args, { cwd, env });
       let stdout = '';
       let stderr = '';
       let settled = false;
@@ -651,17 +673,29 @@ async function runPipelineOneScripts(): Promise<{ stdout: string; stderr: string
       });
     });
 
-  const bootstrap = await runProcess('/bin/bash', [bootstrapScript], path.dirname(bootstrapScript), 120000);
+  fs.mkdirSync(stateDir, { recursive: true });
+
+  const pipelineEnv = {
+    ...process.env,
+    PIPELINE_01_STATE_DIR: stateDir,
+    PIPELINE_01_STATUS_FILE: statusPath,
+  };
+
+  const bootstrap = await runProcess('/bin/bash', [bootstrapScript], path.dirname(bootstrapScript), 120000, pipelineEnv);
   const runner = await runProcess(
     'python3',
     [
       runnerScript,
       '--repo-path', repoPath,
       '--repo-name', path.basename(repoPath),
+      '--state-dir', stateDir,
+      '--packet-db', packetDb,
+      '--issue-db', issueDb,
       '--status-path', statusPath,
     ],
     path.dirname(runnerScript),
     300000,
+    pipelineEnv,
   );
 
   return {
@@ -1060,7 +1094,7 @@ export function activate(context: vscode.ExtensionContext) {
         { location: vscode.ProgressLocation.Notification, title: '🧬 Pipeline① を起動中...' },
         async () => {
           try {
-            const result = await runPipelineOneScripts();
+            const result = await runPipelineOneScripts(context);
             if (result.stdout.trim()) {
               channel.appendLine(result.stdout.trim());
             }
