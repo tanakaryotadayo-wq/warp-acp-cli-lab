@@ -7,12 +7,15 @@ STATUS_FILE="${PIPELINE_01_STATUS_FILE:-$STATE_DIR/status.json}"
 MOUNT_PATH="${PIPELINE_01_MOUNT_PATH:-$HOME/GoogleDriveCache/oss}"
 RCLONE_REMOTE="${PIPELINE_01_RCLONE_REMOTE:-gdrive}"
 RCLONE_SUBPATH="${PIPELINE_01_RCLONE_SUBPATH:-}"
+RCLONE_BIN="${PIPELINE_01_RCLONE_BIN:-$(command -v rclone || true)}"
 N8N_COMPOSE="${PIPELINE_01_N8N_COMPOSE:-$ROOT/integration/n8n-compose.pipeline_01.yml}"
 WORKFLOW_JSON="${PIPELINE_01_WORKFLOW_JSON:-$ROOT/integration/n8n-workflow-pipeline-01.json}"
+RCLONE_LOG="${STATE_DIR}/rclone_mount.log"
 
 mkdir -p "$STATE_DIR" "$MOUNT_PATH"
 
 mounted=false
+mount_error=""
 if mount | grep -F "on $MOUNT_PATH " >/dev/null 2>&1; then
   mounted=true
 else
@@ -20,8 +23,22 @@ else
   if [ -n "$RCLONE_SUBPATH" ]; then
     remote_spec="${RCLONE_REMOTE}:${RCLONE_SUBPATH}"
   fi
-  if rclone mount "$remote_spec" "$MOUNT_PATH" --daemon --vfs-cache-mode full --dir-cache-time 10m --poll-interval 30s >/dev/null 2>&1; then
-    mounted=true
+  : > "$RCLONE_LOG"
+  if [ -z "$RCLONE_BIN" ]; then
+    mount_error="rclone_not_found"
+  elif "$RCLONE_BIN" mount "$remote_spec" "$MOUNT_PATH" --daemon --daemon-timeout 15s --vfs-cache-mode full --dir-cache-time 10m --poll-interval 30s --log-file "$RCLONE_LOG" -vv >/dev/null 2>&1; then
+    for _ in 1 2 3 4 5; do
+      if mount | grep -F "on $MOUNT_PATH " >/dev/null 2>&1; then
+        mounted=true
+        break
+      fi
+      sleep 1
+    done
+    if [ "$mounted" != true ]; then
+      mount_error="mount_not_visible"
+    fi
+  else
+    mount_error="$(tail -n 5 "$RCLONE_LOG" 2>/dev/null | tr '\n' ' ' | sed 's/\"/\x27/g' | sed 's/  */ /g' | cut -c1-400)"
   fi
 fi
 
@@ -69,6 +86,9 @@ status = {
     "mountPath": "${MOUNT_PATH}",
     "driveRemote": "${RCLONE_REMOTE}",
     "driveSubpath": "${RCLONE_SUBPATH}",
+    "rclonePath": "${RCLONE_BIN}",
+    "mountError": "${mount_error}",
+    "rcloneLog": "${RCLONE_LOG}",
     "workflowJson": "${WORKFLOW_JSON}",
     "bootstrapScript": "${ROOT}/scripts/bootstrap_pipeline_01.sh",
 }

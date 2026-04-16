@@ -309,7 +309,7 @@ async function fetchPipelineOneStatus(): Promise<PipelineOneStatus> {
       packetCount: Number(raw.packet_summary?.count ?? raw.packetCount ?? 0),
       issueCount: Number(raw.issue_count ?? raw.issueCount ?? 0),
       eckRuns: Number(raw.eck?.bridge?.runs ?? raw.eckRuns ?? 0),
-      error: raw.error ? String(raw.error) : undefined,
+      error: raw.error ? String(raw.error) : (raw.mountError ? String(raw.mountError) : undefined),
     };
   } catch (error: any) {
     return {

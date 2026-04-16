@@ -17,8 +17,10 @@ pretending multimodal support exists.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
+import logging
 import os
 import re
 import shutil
@@ -27,6 +29,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,6 +37,79 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
+
+_pipeline_log = logging.getLogger("pipeline")
+
+# ─── Pipeline directories (shared with fleet_bridge.py) ─────────────────────
+_FLEET_LOG_DIR = Path(
+    os.environ.get("FLEET_LOG_DIR", os.path.expanduser("~/.gemini/antigravity/fleet-logs"))
+)
+_KI_QUEUE_FILE = Path(
+    os.environ.get("KI_QUEUE_FILE", os.path.expanduser("~/.gemini/antigravity/ki-promotion-queue.jsonl"))
+)
+_KI_KNOWLEDGE_DIR = Path(
+    os.environ.get("KI_KNOWLEDGE_DIR", os.path.expanduser("~/.gemini/antigravity/knowledge"))
+)
+
+
+def _emit_fleet_log(event_type: str, task: str, result: str, route_id: str = "") -> None:
+    """Write a fleet_log entry + KI queue candidate (fire-and-forget)."""
+    try:
+        _FLEET_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": event_type,
+            "task": task[:400],
+            "result": result[:800],
+            "tags": [route_id] if route_id else [],
+        }
+        log_file = _FLEET_LOG_DIR / f"fleet_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        with open(log_file, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        if event_type == "success":
+            _KI_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            fingerprint = hashlib.sha256(f"{task}\n{result}".encode()).hexdigest()[:16]
+            qi = {
+                "id": f"ki_{fingerprint}",
+                "status": "pending",
+                "created_at": entry["timestamp"],
+                "updated_at": entry["timestamp"],
+                "title": task[:120],
+                "summary": result[:400],
+                "task": task[:400],
+                "result": result[:800],
+                "tags": entry["tags"],
+                "suggested_ki_name": re.sub(r"[^a-zA-Z0-9_-]+", "_", task.lower().strip())[:60] or "ki_candidate",
+                "log_file": str(log_file),
+            }
+            with open(_KI_QUEUE_FILE, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(qi, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        _pipeline_log.debug("fleet_log emit failed (non-fatal): %s", exc)
+
+
+def _try_recall(query: str, top_k: int = 3) -> str:
+    """Best-effort memory recall. Returns empty string on any failure."""
+    try:
+        newgate_root = Path(os.environ.get("NEWGATE_ROOT", os.path.expanduser("~/Newgate")))
+        cm_path = newgate_root / "intelligence" / "conversation_memory.py"
+        if not cm_path.exists():
+            return ""
+        spec = importlib.util.spec_from_file_location("conversation_memory", str(cm_path))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        cm = mod.ConversationMemory()
+        results = cm.recall(query, top_k=top_k)
+        if not results:
+            return ""
+        lines = ["[Memory Recall]"]
+        for item in results[:top_k]:
+            text = item.get("text") or item.get("content") or str(item)
+            lines.append(f"- {text[:300]}")
+        return "\n".join(lines) + "\n---\n"
+    except Exception:
+        return ""
 
 
 JSON_CONTENT_TYPE = "application/json"
@@ -498,11 +574,13 @@ def build_newgate_context(profile: Dict[str, Any], focus: str, user_prompt: str)
         "validatedFacts": profile.get("validatedFacts"),
         "focus": focus,
     }
+    recall_block = _try_recall(user_prompt)
     return (
         "[Newgate Context]\n"
         "Treat the following as the current architecture snapshot and operating assumptions.\n"
         f"{json.dumps(summary, ensure_ascii=False, indent=2)}\n"
         "---\n"
+        f"{recall_block}"
         "[User Request]\n"
         f"{user_prompt}"
     )
@@ -1666,7 +1744,16 @@ class LocalGeminiA2ABridge:
                 task.updated_at = now_iso()
                 task.last_error = None
                 task.status_message = reply_message
-                return task.snapshot(self)
+                user_text = flatten_parts(history[-1].get("parts", [])) if history else ""
+                snapshot = task.snapshot(self)
+
+            # Auto fleet_log (outside lock, fire-and-forget thread)
+            threading.Thread(
+                target=_emit_fleet_log,
+                args=("success", user_text[:400], reply_text[:800], task.route_id),
+                daemon=True,
+            ).start()
+            return snapshot
         except BackendError as error:
             with self._lock:
                 task = self.tasks[task_id]
@@ -1682,7 +1769,15 @@ class LocalGeminiA2ABridge:
                     {"routeId": task.route_id},
                 )
                 task.history.append(task.status_message)
-                return task.snapshot(self)
+                user_text = flatten_parts(history[-1].get("parts", [])) if history else ""
+                snapshot = task.snapshot(self)
+
+            threading.Thread(
+                target=_emit_fleet_log,
+                args=("failure", user_text[:400], str(error)[:800], task.route_id),
+                daemon=True,
+            ).start()
+            return snapshot
 
     def _build_openai_messages(self, route: RouteConfig, history: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         messages = [{"role": "system", "content": route.system_prompt}]

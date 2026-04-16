@@ -351,12 +351,29 @@ def handle_ki_queue_promote(arguments: dict) -> dict:
     entry["artifact_path"] = str(artifact_path)
     _write_queue(entries)
 
+    # Auto-index: try to run ConversationMemory.index_knowledge() (fail-soft)
+    indexed = False
+    try:
+        import importlib.util as _ilu
+        newgate_root = Path(os.environ.get("NEWGATE_ROOT", os.path.expanduser("~/Newgate")))
+        cm_path = newgate_root / "intelligence" / "conversation_memory.py"
+        if cm_path.exists():
+            spec = _ilu.spec_from_file_location("conversation_memory", str(cm_path))
+            mod = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            cm = mod.ConversationMemory()
+            cm.index_knowledge(str(ki_dir))
+            indexed = True
+    except Exception:
+        pass
+
     return {
         "status": "promoted",
         "entry": entry,
         "knowledge_dir": str(ki_dir),
         "artifact_path": str(artifact_path),
         "notebook_path": KI_COLAB_NOTEBOOK,
+        "indexed": indexed,
     }
 
 
@@ -387,6 +404,9 @@ def handle_fleet_log(arguments: dict) -> dict:
     if queue_entry is not None:
         result["ki_queue_entry"] = queue_entry
         result["ki_queue_file"] = str(KI_QUEUE_FILE)
+        # Auto-promote: immediately move to knowledge/
+        promote_result = handle_ki_queue_promote({"entry_id": queue_entry["id"]})
+        result["auto_promoted"] = promote_result
     return result
 
 
