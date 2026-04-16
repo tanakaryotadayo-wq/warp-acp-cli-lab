@@ -1,0 +1,225 @@
+{
+  "name": "vortex-critic",
+  "displayName": "VORTEX Critic",
+  "description": "DeepSeek-powered Evidence Verification & Audit Pipeline — VORTEX Protocol for AI Output Integrity",
+  "version": "1.0.0",
+  "publisher": "ryota-core",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vortex-sidebar",
+          "title": "VORTEX",
+          "icon": "media/vortex-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vortex-sidebar": [
+        {
+          "type": "webview",
+          "id": "vortex-sidebar-webview",
+          "name": "⚡ Control Center"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vortex.openAsyncTaskDashboard",
+        "title": "VORTEX: Async Task Dashboard を開く",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "vortex.runAudit",
+        "title": "VORTEX: アクティブファイルを監査",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "vortex.runAuditSelection",
+        "title": "VORTEX: 選択コードを監査"
+      },
+      {
+        "command": "vortex.viewLogs",
+        "title": "VORTEX: フリートログを表示"
+      },
+      {
+        "command": "vortex.clearLogs",
+        "title": "VORTEX: 今日のログを消去"
+      },
+      {
+        "command": "vortex.refreshSidebar",
+        "title": "VORTEX: サイドバーを更新",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vortex.openNewgateSnapshot",
+        "title": "VORTEX: Newgate Snapshot を開く",
+        "icon": "$(light-bulb)"
+      },
+      {
+        "command": "vortex.runPipelineOne",
+        "title": "VORTEX: Pipeline① を起動",
+        "icon": "$(play)"
+      },
+      {
+        "command": "vortex.openPipelineOneSnapshot",
+        "title": "VORTEX: Pipeline① Snapshot を開く",
+        "icon": "$(json)"
+      },
+      {
+        "command": "vortex.packetizeAntigravity",
+        "title": "VORTEX: Antigravity を Packet 抽出",
+        "icon": "$(package)"
+      },
+      {
+        "command": "vortex.openKiQueueSnapshot",
+        "title": "VORTEX: KI Queue Snapshot を開く",
+        "icon": "$(book)"
+      },
+      {
+        "command": "vortex.openKiColabNotebook",
+        "title": "VORTEX: KI Colab Notebook を開く",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "vortex.promoteKiCandidate",
+        "title": "VORTEX: KI 候補を昇格",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "vortex.switchPreset",
+        "title": "VORTEX: PCC Preset を切替"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "vortex.runAuditSelection",
+          "group": "vortex",
+          "when": "editorHasSelection"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vortex.openAsyncTaskDashboard",
+          "when": "view == vortex-sidebar-webview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vortex.refreshSidebar",
+          "when": "view == vortex-sidebar-webview",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vortex.runAudit",
+          "when": "view == vortex-sidebar-webview",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VORTEX Critic",
+      "properties": {
+        "vortex.preset": {
+          "type": "string",
+          "default": "渦",
+          "enum": [
+            "渦",
+            "監",
+            "刃",
+            "探",
+            "極",
+            "均"
+          ],
+          "description": "DeepSeek critic に使う PCC Preset"
+        },
+        "vortex.criticScript": {
+          "type": "string",
+          "default": "",
+          "description": "vortex-critic.py のパス（空なら自動検出）"
+        },
+        "vortex.autoAuditOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "ファイル保存時に VORTEX 監査を自動実行"
+        },
+        "vortex.kiQueueFile": {
+          "type": "string",
+          "default": "",
+          "description": "KI 昇格キュー JSONL のパス（空なら自動検出）"
+        },
+        "vortex.kiKnowledgeDir": {
+          "type": "string",
+          "default": "",
+          "description": "~/.gemini/antigravity/knowledge のパス（空なら自動検出）"
+        },
+        "vortex.kiColabNotebook": {
+          "type": "string",
+          "default": "",
+          "description": "KI ベクトル化に使う Colab/Jupyter notebook のパス（空なら自動検出）"
+        },
+        "vortex.antigravityAppPath": {
+          "type": "string",
+          "default": "",
+          "description": "Packet 抽出対象の Antigravity.app パス（空なら /Applications/Antigravity.app）"
+        },
+        "vortex.antigravityPacketScript": {
+          "type": "string",
+          "default": "",
+          "description": "Antigravity packet 抽出スクリプトのパス（空なら ~/Newgate/intelligence/harvest_antigravity_packets.py）"
+        },
+        "vortex.antigravityPacketDbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Packet を書き込む neural_packets.db のパス（空なら ~/Newgate/intelligence/neural_packets.db）"
+        },
+        "vortex.antigravityPacketSummaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Antigravity packet 抽出サマリー JSON の保存先（空なら ~/.gemini/antigravity/antigravity_packet_snapshot.json）"
+        },
+        "vortex.pipelineOneRepoPath": {
+          "type": "string",
+          "default": "",
+          "description": "Pipeline① で packet 化する OSS repo のパス（空なら ~/vscode-oss）"
+        },
+        "vortex.pipelineOneStatusPath": {
+          "type": "string",
+          "default": "",
+          "description": "Pipeline① status JSON のパス（空なら ~/fusion-gate/data/pipeline_01/status.json）"
+        },
+        "vortex.pipelineOneBootstrapScript": {
+          "type": "string",
+          "default": "",
+          "description": "Pipeline① bootstrap script のパス（空なら ~/fusion-gate/scripts/bootstrap_pipeline_01.sh）"
+        },
+        "vortex.pipelineOneRunnerScript": {
+          "type": "string",
+          "default": "",
+          "description": "Pipeline① runner script のパス（空なら ~/fusion-gate/scripts/pipeline_01_runner.py）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.7.3"
+  }
+}
