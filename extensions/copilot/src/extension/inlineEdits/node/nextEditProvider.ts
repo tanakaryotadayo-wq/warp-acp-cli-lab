@@ -167,28 +167,7 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 
 	private _pendingStatelessNextEditRequest: StatelessNextEditRequest<CachedOrRebasedEdit> | null = null;
 
-	/**
-	 * Tracks a speculative request for the post-edit document state.
-	 * When a suggestion is shown, we speculatively fetch the next edit as if the user had already accepted.
-	 * This allows reusing the in-flight request when the user actually accepts the suggestion.
-	 */
-	private _speculativePendingRequest: {
-		request: StatelessNextEditRequest<CachedOrRebasedEdit>;
-		docId: DocumentId;
-		postEditContent: string;
-	} | null = null;
-
-	/**
-	 * A speculative request that is deferred until the originating stream completes.
-	 * When a suggestion is shown while its stream is still running, we schedule the
-	 * speculative request here instead of firing immediately. If more edits arrive
-	 * from the stream, the schedule is cleared (the shown edit wasn't the last one).
-	 * When the stream ends, if the schedule is still present, the speculative fires.
-	 */
-	private _scheduledSpeculativeRequest: {
-		suggestion: NextEditResult;
-		headerRequestId: string;
-	} | null = null;
+	private readonly _specManager: SpeculativeRequestManager;
 
 	private _lastShownTime = 0;
 	/** The requestId of the last shown suggestion. We store only the requestId (not the object) to avoid preventing garbage collection. */
@@ -230,30 +209,29 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 
 		this._logger = this._logService.createSubLogger(['NES', 'NextEditProvider']);
 		this._nextEditCache = new NextEditCache(this._workspace, this._logService, this._configService, this._expService);
+		this._specManager = this._register(new SpeculativeRequestManager(this._logger.createSubLogger('SpeculativeRequestManager')));
 
 		mapObservableArrayCached(this, this._workspace.openDocuments, (doc, store) => {
 			store.add(runOnChange(doc.value, (value) => {
 				this._cancelPendingRequestDueToDocChange(doc.id, value);
+				this._specManager.onActiveDocumentChanged(doc.id, value.value);
 			}));
+			// When the per-doc store is disposed, the document was removed from
+			// openDocuments. Cancel any speculative targeting it — its cached result
+			// would never be hit again.
+			store.add(toDisposable(() => this._specManager.onDocumentClosed(doc.id)));
 		}).recomputeInitiallyAndOnChange(this._store);
 	}
 
-	private _cancelSpeculativeRequest(): void {
-		this._scheduledSpeculativeRequest = null;
-		if (this._speculativePendingRequest) {
-			this._speculativePendingRequest.request.cancellationTokenSource.cancel();
-			this._speculativePendingRequest = null;
-		}
-	}
-
 	private _cancelPendingRequestDueToDocChange(docId: DocumentId, docValue: StringText) {
-		// Note: we intentionally do NOT cancel the speculative request here.
-		// The speculative request's postEditContent represents a *future* document state
-		// (after the user would accept the suggestion), so it will almost never match the
-		// current document value while the user is still typing. Cancelling here would
-		// wastefully kill and recreate the speculative request on every keystroke.
-		// Instead, speculative requests are cancelled by the appropriate lifecycle handlers:
-		// handleRejection, handleIgnored, _triggerSpeculativeRequest, and _executeNewNextEditRequest.
+		// Speculative requests are handled by `_specManager.onActiveDocumentChanged`,
+		// which uses a trajectory check (the user's typing must remain a type-through
+		// prefix toward the speculative's `postEditContent`) to decide whether to
+		// cancel. That handles the common type-through case (e.g. typing `i` while a
+		// suggestion of `ibonacci` is shown) without losing the speculative.
+		// This method only deals with the regular pending request, which is keyed on
+		// the *pre-edit* state and must be cancelled whenever the active document
+		// diverges from it.
 
 		const isAsyncCompletions = this._configService.getExperimentBasedConfig(ConfigKey.TeamInternal.InlineEditsAsyncCompletions, this._expService);
 		if (isAsyncCompletions || this._pendingStatelessNextEditRequest === null) {
@@ -547,11 +525,12 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 			&& this._pendingStatelessNextEditRequest || undefined;
 
 		// Check if we can reuse the speculative pending request (from when a suggestion was shown)
-		const speculativeRequestMatches = this._speculativePendingRequest?.docId === curDocId
-			&& this._speculativePendingRequest?.postEditContent === documentAtInvocationTime.value
-			&& !this._speculativePendingRequest.request.cancellationTokenSource.token.isCancellationRequested
-			&& cursorInRequestEditWindow(this._speculativePendingRequest.request);
-		const speculativeRequest = speculativeRequestMatches ? this._speculativePendingRequest?.request : undefined;
+		const specPending = this._specManager.pending;
+		const speculativeRequestMatches = specPending?.docId === curDocId
+			&& specPending?.postEditContent === documentAtInvocationTime.value
+			&& !specPending.request.cancellationTokenSource.token.isCancellationRequested
+			&& cursorInRequestEditWindow(specPending.request);
+		const speculativeRequest = speculativeRequestMatches ? specPending?.request : undefined;
 
 		// Prefer speculative request if it matches (it was specifically created for this post-edit state)
 		const requestToReuse = speculativeRequest ?? existingNextEditRequest;
@@ -560,8 +539,8 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 			// Nice! No need to make another request, we can reuse the result from a pending request.
 			if (speculativeRequest) {
 				logger.trace(`reusing speculative pending request (opportunityId=${speculativeRequest.opportunityId}, headerRequestId=${speculativeRequest.headerRequestId})`);
-				// Clear the speculative request since we're using it
-				this._speculativePendingRequest = null;
+				// Detach the speculative — caller is consuming it now.
+				this._specManager.consumePending();
 			} else {
 				logger.trace(`reusing in-flight pending request (opportunityId=${requestToReuse.opportunityId}, headerRequestId=${requestToReuse.headerRequestId})`);
 			}
@@ -742,17 +721,12 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 			// Clear any scheduled (but not yet triggered) speculative request tied to the
 			// old stream — it would otherwise fire stale when the old stream's background
 			// loop calls handleStreamEnd after the stream has already been superseded.
-			this._scheduledSpeculativeRequest = null;
+			this._specManager.clearScheduled();
 		}
 
 		// Cancel speculative request if it doesn't match the document/state
 		// of this new request — it was built for a different document or post-edit state.
-		if (this._speculativePendingRequest
-			&& (this._speculativePendingRequest.docId !== curDocId
-				|| this._speculativePendingRequest.postEditContent !== nextEditRequest.documentBeforeEdits.value)
-		) {
-			this._cancelSpeculativeRequest();
-		}
+		this._specManager.cancelIfMismatch(curDocId, nextEditRequest.documentBeforeEdits.value, SpeculativeCancelReason.Superseded);
 
 		this._pendingStatelessNextEditRequest = nextEditRequest;
 
@@ -889,9 +863,8 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 
 			// Fire any scheduled speculative request — the last shown edit
 			// was indeed the last edit from this stream.
-			if (this._scheduledSpeculativeRequest?.headerRequestId === nextEditRequest.headerRequestId) {
-				const scheduled = this._scheduledSpeculativeRequest;
-				this._scheduledSpeculativeRequest = null;
+			const scheduled = this._specManager.consumeScheduled(nextEditRequest.headerRequestId);
+			if (scheduled) {
 				void this._triggerSpeculativeRequest(scheduled.suggestion);
 			}
 
@@ -921,9 +894,7 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 
 							// A new edit arrived from the stream — the previously-shown
 							// edit was not the last one. Clear the scheduled speculative.
-							if (this._scheduledSpeculativeRequest?.headerRequestId === nextEditRequest.headerRequestId) {
-								this._scheduledSpeculativeRequest = null;
-							}
+							this._specManager.consumeScheduled(nextEditRequest.headerRequestId);
 
 							res = await editStream.next();
 						}
@@ -1031,7 +1002,7 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 		this._lastShownTime = Date.now();
 		this._lastShownSuggestionId = suggestion.requestId;
 		this._lastOutcome = undefined; // clear so that outcome is "pending" until resolved
-		this._scheduledSpeculativeRequest = null; // clear any previously scheduled speculative
+		this._specManager.clearScheduled(); // clear any previously scheduled speculative
 
 		// Trigger speculative request for the post-edit document state
 		const speculativeRequestsEnablement = this._configService.getExperimentBasedConfig(ConfigKey.TeamInternal.InlineEditsSpeculativeRequests, this._expService);
@@ -1042,10 +1013,10 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 			// request only fires when the stream ends with the shown edit as the last one.
 			const originatingRequest = this._pendingStatelessNextEditRequest;
 			if (originatingRequest && originatingRequest.headerRequestId === suggestion.source.headerRequestId) {
-				this._scheduledSpeculativeRequest = {
+				this._specManager.schedule({
 					suggestion,
 					headerRequestId: originatingRequest.headerRequestId,
-				};
+				});
 			} else {
 				void this._triggerSpeculativeRequest(suggestion);
 			}
@@ -1116,7 +1087,8 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 		}
 
 		// Check if we already have a speculative request for this post-edit state
-		if (this._speculativePendingRequest?.docId === docId && this._speculativePendingRequest?.postEditContent === postEditContent) {
+		const existingSpec = this._specManager.pending;
+		if (existingSpec?.docId === docId && existingSpec?.postEditContent === postEditContent) {
 			logger.trace('already have speculative request for post-edit state');
 			return;
 		}
@@ -1130,8 +1102,8 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 			return;
 		}
 
-		// Cancel any previous speculative request
-		this._cancelSpeculativeRequest();
+		// Cancel any previous speculative request — we are about to install a new one.
+		this._specManager.cancelAll(SpeculativeCancelReason.Replaced);
 
 		const historyContext = this._historyContextProvider.getHistoryContext(docId);
 		if (!historyContext) {
@@ -1160,11 +1132,24 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 			);
 
 			if (speculativeRequest) {
-				this._speculativePendingRequest = {
+				// Capture trajectory data: while the user is typing in `docId`, the
+				// document is on a "type-through" trajectory iff:
+				//   doc = preEdit[0..editStart] + newText[0..k] + preEdit[editEnd..]
+				// for some 0 <= k <= newText.length. Storing the prefix/suffix/newText
+				// (already-CRLF-normalized via `result.edit.newText` whose newlines
+				// match the original document) lets us check this in O(|cur|) on doc changes.
+				const preEditValue = result.documentBeforeEdits.value;
+				const trajectoryPrefix = preEditValue.slice(0, preciseEdit.replaceRange.start);
+				const trajectorySuffix = preEditValue.slice(preciseEdit.replaceRange.endExclusive);
+				const trajectoryNewText = preciseEdit.newText;
+				this._specManager.setPending({
 					request: speculativeRequest,
 					docId,
 					postEditContent,
-				};
+					trajectoryPrefix,
+					trajectorySuffix,
+					trajectoryNewText,
+				});
 			}
 		} catch (e) {
 			logger.trace(`speculative request failed: ${ErrorUtils.toString(e)}`);
@@ -1446,7 +1431,7 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 		// The user rejected the suggestion, so the speculative request (which
 		// predicted the post-accept state) will never be reused. Cancel it to
 		// avoid wasting a server slot.
-		this._cancelSpeculativeRequest();
+		this._specManager.cancelAll(SpeculativeCancelReason.Rejected);
 
 		const shownDuration = Date.now() - this._lastShownTime;
 		if (shownDuration > 1000 && suggestion.result.edit) {
@@ -1471,9 +1456,15 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 		if (wasShown && !wasSuperseded) {
 			// The shown suggestion was dismissed (not superseded by a new one),
 			// so the speculative request for its post-accept state is useless.
-			this._cancelSpeculativeRequest();
+			this._specManager.cancelAll(SpeculativeCancelReason.IgnoredDismissed);
 			this._statelessNextEditProvider.handleIgnored?.();
 		}
+		// Note: the superseded case is intentionally NOT handled here. The trajectory
+		// check on `_specManager.onActiveDocumentChanged` already cancels the
+		// speculative iff the user's edit moved off the type-through trajectory; if
+		// the new (superseding) suggestion is just a continuation of the old one
+		// (e.g. typed `i` while `ibonacci` was shown → now `bonacci` is shown), the
+		// speculative's `postEditContent` is still the right bet and we keep it.
 	}
 
 	private async runSnippy(docId: DocumentId, suggestion: NextEditResult) {
@@ -1498,6 +1489,9 @@ export class NextEditProvider extends Disposable implements INextEditProvider<Ne
 	public clearCache() {
 		this._nextEditCache.clear();
 		this._rejectionCollector.clear();
+		// Any in-flight speculative would land its result into a cache that's
+		// meant to be empty (and may be based on a now-stale model/auth/prompt).
+		this._specManager.cancelAll(SpeculativeCancelReason.CacheCleared);
 	}
 }
 
@@ -1506,6 +1500,179 @@ function assertDefined<T>(value: T | undefined): T {
 		throw new BugIndicatingError('expected value to be defined, but it was not');
 	}
 	return value;
+}
+
+/**
+ * Reasons why a speculative request was cancelled. Recorded on the request's
+ * log context so each cancellation has an attributable cause.
+ */
+export const enum SpeculativeCancelReason {
+	/** The originating suggestion was rejected by the user. */
+	Rejected = 'rejected',
+	/** The originating suggestion was dismissed without being superseded. */
+	IgnoredDismissed = 'ignoredDismissed',
+	/** A new fetch is starting whose `(docId, postEditContent)` doesn't match. */
+	Superseded = 'superseded',
+	/** A newer speculative is being installed in this slot. */
+	Replaced = 'replaced',
+	/** The user's edits moved off the type-through trajectory toward `postEditContent`. */
+	DivergedFromTrajectory = 'divergedFromTrajectory',
+	/** `clearCache()` was invoked — the result has nowhere meaningful to land. */
+	CacheCleared = 'cacheCleared',
+	/** The target document was removed from the workspace. */
+	DocumentClosed = 'documentClosed',
+	/** The provider was disposed. */
+	Disposed = 'disposed',
+}
+
+interface SpeculativePendingRequest {
+	readonly request: StatelessNextEditRequest<CachedOrRebasedEdit>;
+	readonly docId: DocumentId;
+	readonly postEditContent: string;
+	/** preEditDocument[0..editStart] — the doc text before the edit window. */
+	readonly trajectoryPrefix: string;
+	/** preEditDocument[editEnd..] — the doc text after the edit window. */
+	readonly trajectorySuffix: string;
+	/** The replacement text the user would type to reach `postEditContent`. */
+	readonly trajectoryNewText: string;
+}
+
+interface ScheduledSpeculativeRequest {
+	readonly suggestion: NextEditResult;
+	readonly headerRequestId: string;
+}
+
+/**
+ * Owns the lifecycle of NES speculative requests:
+ *
+ * - the in-flight `pending` speculative (the bet on a specific post-accept document state)
+ * - the `scheduled` speculative deferred until its originating stream completes
+ *
+ * Centralizes cancellation with typed reasons so every triggered cancellation
+ * (reject, supersede, doc-close, trajectory divergence, dispose, ...) goes through
+ * one path and is logged on the request's log context.
+ */
+class SpeculativeRequestManager extends Disposable {
+
+	private _pending: SpeculativePendingRequest | null = null;
+	private _scheduled: ScheduledSpeculativeRequest | null = null;
+
+	constructor(private readonly _logger: ILogger) {
+		super();
+	}
+
+	get pending(): SpeculativePendingRequest | null {
+		return this._pending;
+	}
+
+	/** Replaces the current pending speculative; cancels the prior one as `Replaced`. */
+	setPending(req: SpeculativePendingRequest): void {
+		if (this._pending && this._pending.request !== req.request) {
+			this._cancelPending(SpeculativeCancelReason.Replaced);
+		}
+		this._pending = req;
+	}
+
+	/** Detaches the pending speculative without cancelling — caller is consuming it. */
+	consumePending(): void {
+		this._pending = null;
+	}
+
+	schedule(s: ScheduledSpeculativeRequest): void {
+		this._scheduled = s;
+	}
+
+	clearScheduled(): void {
+		this._scheduled = null;
+	}
+
+	/**
+	 * Removes and returns the scheduled entry iff its `headerRequestId` matches.
+	 * Used by the streaming path so that each stream only ever consumes its own
+	 * schedule, never another stream's.
+	 */
+	consumeScheduled(headerRequestId: string): ScheduledSpeculativeRequest | null {
+		if (this._scheduled?.headerRequestId !== headerRequestId) {
+			return null;
+		}
+		const s = this._scheduled;
+		this._scheduled = null;
+		return s;
+	}
+
+	cancelAll(reason: SpeculativeCancelReason): void {
+		this._scheduled = null;
+		this._cancelPending(reason);
+	}
+
+	/** Cancels the pending speculative iff `(docId, postEditContent)` doesn't match. */
+	cancelIfMismatch(docId: DocumentId, postEditContent: string, reason: SpeculativeCancelReason): void {
+		if (this._pending && (this._pending.docId !== docId || this._pending.postEditContent !== postEditContent)) {
+			this._cancelPending(reason);
+		}
+	}
+
+	/** Cancels the pending and clears any scheduled targeting this document. */
+	onDocumentClosed(docId: DocumentId): void {
+		if (this._scheduled?.suggestion.result?.targetDocumentId === docId) {
+			this._scheduled = null;
+		}
+		if (this._pending?.docId === docId) {
+			this._cancelPending(SpeculativeCancelReason.DocumentClosed);
+		}
+	}
+
+	/**
+	 * Trajectory check. The pending speculative is alive iff the current document
+	 * value is a *type-through prefix* toward the speculative's `postEditContent`:
+	 *
+	 *     cur === trajectoryPrefix + middle + trajectorySuffix
+	 *     where middle is some prefix of trajectoryNewText
+	 *
+	 * If not, the user's edits cannot reach `postEditContent` via continued typing
+	 * and the speculative will never be consumed — cancel now.
+	 */
+	onActiveDocumentChanged(docId: DocumentId, currentDocValue: string): void {
+		const p = this._pending;
+		if (!p || p.docId !== docId) {
+			return;
+		}
+		// Cheap structural failure: doc shorter than the unedited frame.
+		if (currentDocValue.length < p.trajectoryPrefix.length + p.trajectorySuffix.length) {
+			this._cancelPending(SpeculativeCancelReason.DivergedFromTrajectory);
+			return;
+		}
+		if (!currentDocValue.startsWith(p.trajectoryPrefix) || !currentDocValue.endsWith(p.trajectorySuffix)) {
+			this._cancelPending(SpeculativeCancelReason.DivergedFromTrajectory);
+			return;
+		}
+		const middle = currentDocValue.slice(p.trajectoryPrefix.length, currentDocValue.length - p.trajectorySuffix.length);
+		if (!p.trajectoryNewText.startsWith(middle)) {
+			this._cancelPending(SpeculativeCancelReason.DivergedFromTrajectory);
+		}
+	}
+
+	private _cancelPending(reason: SpeculativeCancelReason): void {
+		const p = this._pending;
+		if (!p) {
+			return;
+		}
+		this._pending = null;
+		const headerRequestId = p.request.headerRequestId;
+		this._logger.trace(`cancelling speculative request: ${reason} (headerRequestId=${headerRequestId})`);
+		p.request.logContext.addLog(`speculative request cancelled: ${reason}`);
+		const cts = p.request.cancellationTokenSource;
+		cts.cancel();
+		// Dispose to release the cancel-event listeners that the in-flight
+		// provider call hooked onto the token. Safe even though the runner may
+		// observe cancellation asynchronously — `cancel()` already fired the event.
+		cts.dispose();
+	}
+
+	override dispose(): void {
+		this.cancelAll(SpeculativeCancelReason.Disposed);
+		super.dispose();
+	}
 }
 
 export class NextEditFetchRequest {
