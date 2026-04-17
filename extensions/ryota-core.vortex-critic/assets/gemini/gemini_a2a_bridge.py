@@ -385,13 +385,19 @@ def normalize_message(raw_message: Dict[str, Any]) -> Dict[str, Any]:
             "metadata": dict(raw_message.get("metadata") or {}),
         }
 
+    # REST A2A v0.3 uses "content"; many A2A clients also send "parts"
+    # without the "kind":"message" envelope. Accept both so the bridge
+    # doesn't silently drop the user's text.
+    raw_parts = raw_message.get("content")
+    if not raw_parts:
+        raw_parts = raw_message.get("parts", [])
     return {
         "kind": "message",
         "messageId": raw_message.get("messageId") or raw_message.get("message_id") or new_id(),
         "contextId": raw_message.get("contextId") or raw_message.get("context_id", ""),
         "taskId": raw_message.get("taskId") or raw_message.get("task_id", ""),
         "role": coerce_role(raw_message.get("role")),
-        "parts": [normalize_part(part) for part in raw_message.get("content", [])],
+        "parts": [normalize_part(part) for part in raw_parts],
         "metadata": dict(raw_message.get("metadata") or {}),
     }
 
@@ -1723,7 +1729,33 @@ class LocalGeminiA2ABridge:
             return snapshot
 
     def _build_openai_messages(self, route: RouteConfig, history: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        messages = [{"role": "system", "content": route.system_prompt}]
+        system_prompt = route.system_prompt
+
+        # Inject Newgate memory recall for the latest user turn so every
+        # lane request gets the same external-memory context that ACP
+        # commands already receive via build_newgate_context().
+        latest_user_text = ""
+        for item in reversed(history):
+            if item.get("role") != ROLE_AGENT:
+                latest_user_text = flatten_parts(item.get("parts", []))
+                if latest_user_text:
+                    break
+        if latest_user_text:
+            try:
+                recall_block = _try_recall(latest_user_text)
+            except Exception as recall_error:  # never break routing on recall failure
+                _pipeline_log.debug("memory recall failed: %s", recall_error)
+                recall_block = ""
+            if recall_block:
+                system_prompt = f"{system_prompt}\n\n{recall_block}"
+                _pipeline_log.info(
+                    "memory_recall_injected route=%s chars=%d query_head=%r",
+                    route.route_id if hasattr(route, "route_id") else "?",
+                    len(recall_block),
+                    latest_user_text[:80],
+                )
+
+        messages = [{"role": "system", "content": system_prompt}]
         for item in history:
             role = "assistant" if item.get("role") == ROLE_AGENT else "user"
             content = flatten_parts(item.get("parts", []))

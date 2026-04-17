@@ -219,13 +219,18 @@ def emit_fleet_log(event_type: str, task: str, result: str, route_id: str = "") 
 
 # ─── Public API — recall ─────────────────────────────────────────────────────
 
-def try_recall(query: str, top_k: int = 3, min_score: float = 0.3) -> str:
+def try_recall(query: str, top_k: int = 3, min_score: float = 0.05) -> str:
     """Best-effort memory recall via ConversationMemory.search.
 
     Returns a short context block ready to be injected into a prompt,
     or "" on any failure. ConversationMemory exposes `search(query,
     top_k, min_score)`, not `recall`; this wrapper hides that detail
     from callers.
+
+    Default `min_score` is tuned for the Qwen3-Embedding-8B scale used
+    by the local KI store (cosine similarity on these embeddings runs
+    roughly in [0, 0.3] for related content, not [0, 1] like OpenAI
+    ada). Keep it low enough that real related items come through.
     """
     try:
         cm = _load_conversation_memory()
@@ -241,10 +246,22 @@ def try_recall(query: str, top_k: int = 3, min_score: float = 0.3) -> str:
                 or item.get("content")
                 or item.get("chunk")
                 or item.get("snippet")
+                or item.get("content_preview")
                 or ""
             )
-            src = item.get("source_type") or item.get("type") or ""
-            cid = item.get("chunk_id") or item.get("id") or ""
+            meta = item.get("metadata") or {}
+            src = (
+                item.get("source_type")
+                or meta.get("source_type")
+                or item.get("type")
+                or ""
+            )
+            cid = (
+                item.get("chunk_id")
+                or item.get("source_doc_uri")
+                or item.get("id")
+                or ""
+            )
             header = f"- [{src} {cid}]".rstrip()
             lines.append(header)
             if text:
