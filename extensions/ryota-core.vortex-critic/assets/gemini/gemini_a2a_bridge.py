@@ -40,76 +40,19 @@ from urllib.request import Request, urlopen
 
 _pipeline_log = logging.getLogger("pipeline")
 
-# ─── Pipeline directories (shared with fleet_bridge.py) ─────────────────────
-_FLEET_LOG_DIR = Path(
-    os.environ.get("FLEET_LOG_DIR", os.path.expanduser("~/.gemini/antigravity/fleet-logs"))
-)
-_KI_QUEUE_FILE = Path(
-    os.environ.get("KI_QUEUE_FILE", os.path.expanduser("~/.gemini/antigravity/ki-promotion-queue.jsonl"))
-)
-_KI_KNOWLEDGE_DIR = Path(
-    os.environ.get("KI_KNOWLEDGE_DIR", os.path.expanduser("~/.gemini/antigravity/knowledge"))
-)
-
-
-def _emit_fleet_log(event_type: str, task: str, result: str, route_id: str = "") -> None:
-    """Write a fleet_log entry + KI queue candidate (fire-and-forget)."""
-    try:
-        _FLEET_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "event_type": event_type,
-            "task": task[:400],
-            "result": result[:800],
-            "tags": [route_id] if route_id else [],
-        }
-        log_file = _FLEET_LOG_DIR / f"fleet_{datetime.now().strftime('%Y%m%d')}.jsonl"
-        with open(log_file, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-        if event_type == "success":
-            _KI_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            fingerprint = hashlib.sha256(f"{task}\n{result}".encode()).hexdigest()[:16]
-            qi = {
-                "id": f"ki_{fingerprint}",
-                "status": "pending",
-                "created_at": entry["timestamp"],
-                "updated_at": entry["timestamp"],
-                "title": task[:120],
-                "summary": result[:400],
-                "task": task[:400],
-                "result": result[:800],
-                "tags": entry["tags"],
-                "suggested_ki_name": re.sub(r"[^a-zA-Z0-9_-]+", "_", task.lower().strip())[:60] or "ki_candidate",
-                "log_file": str(log_file),
-            }
-            with open(_KI_QUEUE_FILE, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(qi, ensure_ascii=False) + "\n")
-    except Exception as exc:
-        _pipeline_log.debug("fleet_log emit failed (non-fatal): %s", exc)
-
-
-def _try_recall(query: str, top_k: int = 3) -> str:
-    """Best-effort memory recall. Returns empty string on any failure."""
-    try:
-        newgate_root = Path(os.environ.get("NEWGATE_ROOT", os.path.expanduser("~/Newgate")))
-        cm_path = newgate_root / "intelligence" / "conversation_memory.py"
-        if not cm_path.exists():
-            return ""
-        spec = importlib.util.spec_from_file_location("conversation_memory", str(cm_path))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        cm = mod.ConversationMemory()
-        results = cm.recall(query, top_k=top_k)
-        if not results:
-            return ""
-        lines = ["[Memory Recall]"]
-        for item in results[:top_k]:
-            text = item.get("text") or item.get("content") or str(item)
-            lines.append(f"- {text[:300]}")
-        return "\n".join(lines) + "\n---\n"
-    except Exception:
-        return ""
+# ─── Memory pipeline (extracted module) ─────────────────────────────────────
+try:
+    from memory_pipeline import emit_fleet_log as _emit_fleet_log, try_recall as _try_recall
+except ImportError:
+    # Fallback: resolve from same directory
+    import importlib.util as _mp_ilu
+    _mp_spec = _mp_ilu.spec_from_file_location(
+        "memory_pipeline", str(Path(__file__).parent / "memory_pipeline.py")
+    )
+    _mp_mod = _mp_ilu.module_from_spec(_mp_spec)
+    _mp_spec.loader.exec_module(_mp_mod)  # type: ignore[union-attr]
+    _emit_fleet_log = _mp_mod.emit_fleet_log
+    _try_recall = _mp_mod.try_recall
 
 
 JSON_CONTENT_TYPE = "application/json"

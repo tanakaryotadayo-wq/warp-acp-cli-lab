@@ -1,0 +1,15 @@
+{
+  "pipeline": "pipeline-01",
+  "stage": "bootstrapped",
+  "mounted": false,
+  "cbfHealthy": true,
+  "n8nReady": true,
+  "mountPath": "/Users/ryyota/GoogleDriveCache/oss",
+  "driveRemote": "gdrive",
+  "driveSubpath": "",
+  "rclonePath": "/Users/ryyota/.local/bin/rclone",
+  "mountError": "2026/04/17 02:35:32 INFO : Google drive root '': vfs cache: cleaned: objects 0 (was 0) in use 0, to upload 0, uploading 0, total size 0 (was 0) 2026/04/17 02:35:32 DEBUG : Google drive root '': Mounting with options: ['-o' 'attr_timeout=1' '-o' 'fsname=gdrive:' '-o' 'subtype=rclone' '-o' 'max_readahead=131072' '-o' 'atomic_o_trunc' '-o' 'daemon_timeout=15' '-o' 'volname=gdrive' '-o' 'noappledouble",
+  "rcloneLog": "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/pipeline/data/pipeline_01/rclone_mount.log",
+  "workflowJson": "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/pipeline/integration/n8n-workflow-pipeline-01.json",
+  "bootstrapScript": "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/pipeline/scripts/bootstrap_pipeline_01.sh"
+}

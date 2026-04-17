@@ -1,0 +1,29 @@
+2026/04/17 02:35:31 DEBUG : rclone: Version "v1.73.4" starting with parameters ["/Users/ryyota/.local/bin/rclone" "mount" "gdrive:" "/Users/ryyota/GoogleDriveCache/oss" "--daemon" "--daemon-timeout" "15s" "--vfs-cache-mode" "full" "--dir-cache-time" "10m" "--poll-interval" "30s" "--log-file" "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/pipeline/data/pipeline_01/rclone_mount.log" "-vv"]
+2026/04/17 02:35:31 DEBUG : Creating backend with remote "gdrive:"
+2026/04/17 02:35:31 DEBUG : Using config file from "/Users/ryyota/.config/rclone/rclone.conf"
+2026/04/17 02:35:31 DEBUG : gdrive: Token expired
+2026/04/17 02:35:31 DEBUG : gdrive: No updated token found in the config file
+2026/04/17 02:35:32 DEBUG : gdrive: Token refresh successful
+2026/04/17 02:35:32 DEBUG : Saving config "token" in section "gdrive" of the config file
+2026/04/17 02:35:32 DEBUG : Keeping previous permissions for config file: -rw-r--r--
+2026/04/17 02:35:32 DEBUG : gdrive: Saved new token in config file
+2026/04/17 02:35:32 DEBUG : Google drive root '': 'root_folder_id = 0AKjqUbbm0Z0rUk9PVA' - save this in the config to speed up startup
+2026/04/17 02:35:32 DEBUG : rclone: Version "v1.73.4" starting with parameters ["/Users/ryyota/.local/bin/rclone" "mount" "gdrive:" "/Users/ryyota/GoogleDriveCache/oss" "--daemon" "--daemon-timeout" "15s" "--vfs-cache-mode" "full" "--dir-cache-time" "10m" "--poll-interval" "30s" "--log-file" "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/pipeline/data/pipeline_01/rclone_mount.log" "-vv"]
+2026/04/17 02:35:32 DEBUG : Creating backend with remote "gdrive:"
+2026/04/17 02:35:32 DEBUG : Using config file from "/Users/ryyota/.config/rclone/rclone.conf"
+2026/04/17 02:35:32 DEBUG : Google drive root '': 'root_folder_id = 0AKjqUbbm0Z0rUk9PVA' - save this in the config to speed up startup
+2026/04/17 02:35:32 DEBUG : Google drive root '': vfs cache: root is "/Users/ryyota/Library/Caches/rclone"
+2026/04/17 02:35:32 DEBUG : Google drive root '': vfs cache: data root is "/Users/ryyota/Library/Caches/rclone/vfs/gdrive"
+2026/04/17 02:35:32 DEBUG : Google drive root '': vfs cache: metadata root is "/Users/ryyota/Library/Caches/rclone/vfsMeta/gdrive"
+2026/04/17 02:35:32 DEBUG : Creating backend with remote ":local,encoding='Slash,InvalidUtf8,Dot',links=false:/Users/ryyota/Library/Caches/rclone/vfs/gdrive/"
+2026/04/17 02:35:32 DEBUG : :local: detected overridden config - adding "{_n3aE}" suffix to name
+2026/04/17 02:35:32 DEBUG : fs cache: renaming cache item ":local,encoding='Slash,InvalidUtf8,Dot',links=false:/Users/ryyota/Library/Caches/rclone/vfs/gdrive/" to be canonical ":local{_n3aE}:/Users/ryyota/Library/Caches/rclone/vfs/gdrive"
+2026/04/17 02:35:32 DEBUG : Creating backend with remote ":local,encoding='Slash,InvalidUtf8,Dot',links=false:/Users/ryyota/Library/Caches/rclone/vfsMeta/gdrive/"
+2026/04/17 02:35:32 DEBUG : :local: detected overridden config - adding "{_n3aE}" suffix to name
+2026/04/17 02:35:32 DEBUG : fs cache: renaming cache item ":local,encoding='Slash,InvalidUtf8,Dot',links=false:/Users/ryyota/Library/Caches/rclone/vfsMeta/gdrive/" to be canonical ":local{_n3aE}:/Users/ryyota/Library/Caches/rclone/vfsMeta/gdrive"
+2026/04/17 02:35:32 DEBUG : Mounting on "/Users/ryyota/GoogleDriveCache/oss" ("gdrive")
+2026/04/17 02:35:32 INFO  : Google drive root '': vfs cache: cleaned: objects 0 (was 0) in use 0, to upload 0, uploading 0, total size 0 (was 0)
+2026/04/17 02:35:32 DEBUG : Google drive root '': Mounting with options: ["-o" "attr_timeout=1" "-o" "fsname=gdrive:" "-o" "subtype=rclone" "-o" "max_readahead=131072" "-o" "atomic_o_trunc" "-o" "daemon_timeout=15" "-o" "volname=gdrive" "-o" "noappledouble"]
+2026/04/17 02:35:32 CRITICAL: Fatal error: failed to mount FUSE fs: mount stopped before calling Init: mount failed: cgofuse: cannot find FUSE
+2026/04/17 02:35:32 ERROR : Daemon timed out. Failed to terminate daemon pid 80751: os: process already finished
+2026/04/17 02:35:32 CRITICAL: Fatal error: daemon exited with error code 1
