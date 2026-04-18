@@ -215,5 +215,52 @@
 		".github/skills/.local": true,
 		".agents/skills/.local": true,
 		".claude/skills/.local": true,
-	}
+	},
+
+	// ── VORTEX AI OS ────────────────────────────────────────────────────
+	// Runtime control plane
+	"vortex.pipelineOneRepoPath": "/Users/ryyota/vscode-oss",
+	"vortex.pipelineOneStatusPath": "/Users/ryyota/vscode-oss/.build/ryota/pipeline_01/status.json",
+	"vortex.pipelineOneBootstrapScript": "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/pipeline/scripts/bootstrap_pipeline_01.sh",
+	"vortex.pipelineOneRunnerScript": "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/pipeline/scripts/pipeline_01_runner.py",
+	"vortex.geminiBridgeBootstrapScript": "/Users/ryyota/vscode-oss/extensions/ryota-core.vortex-critic/assets/gemini/bootstrap_gemini_code_assist.sh",
+	"vortex.geminiBridgeStatusPath": "/Users/ryyota/vscode-oss/.build/ryota/gemini-code-assist/status.json",
+	"vortex.geminiBridgePort": 8765,
+	"vortex.runtime.backgroundLauncher": "tmux",
+	"vortex.geminiBridgeTmuxSession": "vortex-gemini-bridge",
+	"vortex.pipelineOneCbfTmuxSession": "vortex-pipeline-cbf",
+	"vortex.pipelineOneContainerRuntime": "orbstack",
+	// Fusion Gate & Fleet
+	"vortex.fusionGateUrl": "http://127.0.0.1:9800",
+	"vortex.fleet.utilityEndpoint": "http://127.0.0.1:8101",
+	"vortex.fleet.agentEndpoint": "http://127.0.0.1:8102",
+	"vortex.fleet.conversationEndpoint": "http://127.0.0.1:8103",
+	"vortex.fleet.embeddingEndpoint": "http://127.0.0.1:8093/v1/embeddings",
+	"vortex.fleet.embeddingModel": "nv-embed-v2",
+	"vortex.fleet.healthCheckInterval": 30000,
+	// Sovereign Memory
+	"vortex.memory.recallOnActivate": true,
+	"vortex.memory.autoIndexOnPromote": true,
+	"vortex.memory.brainDir": "/Users/ryyota/.gemini/antigravity/brain",
+	// Harvest
+	"vortex.harvest.enable": true,
+	"vortex.harvest.semanticDiff": true,
+	"vortex.harvest.packetDbPath": "/Users/ryyota/Newgate/intelligence/neural_packets.db",
+	"vortex.harvest.targetLanguages": ["typescript", "python"],
+	"vortex.antigravityPacketScript": "/Users/ryyota/Newgate/intelligence/harvest_antigravity_packets.py",
+	"vortex.antigravityPacketDbPath": "/Users/ryyota/Newgate/intelligence/neural_packets.db",
+	"vortex.antigravityPacketSummaryPath": "/Users/ryyota/.gemini/antigravity/antigravity_packet_snapshot.json",
+	// State Streaming
+	"vortex.stateStream.enable": true,
+	"vortex.stateStream.endpoint": "http://127.0.0.1:9800/v1/ide/state",
+	"vortex.stateStream.interval": 5000,
+	"vortex.stateStream.includeDiagnostics": true,
+	"vortex.stateStream.includeGit": true,
+	// Action Server
+	"vortex.actionServer.enable": true,
+	"vortex.actionServer.port": 19800,
+	"vortex.actionServer.allowedActions": ["openFile", "insertText", "applyDiff", "runCommand"],
+	// Quality Gate
+	"vortex.autoAuditOnSave": false,
+	"vortex.preset": "監"
 }
