@@ -18,14 +18,20 @@ source of truth:
   "pipeline": "pipeline-01",
   "stage": "bootstrapped",
   "mounted": true,
+  "mountMode": "nfs",
   "cbfHealthy": true,
   "n8nReady": true,
   "mountPath": "/abs/path",
   "driveRemote": "gdrive",
   "driveSubpath": "",
-  "rclonePath": "/opt/homebrew/bin/rclone",
+  "rclonePath": "/Users/me/.local/bin/rclone",
   "mountError": "",
-  "rcloneLog": "/abs/path/rclone_mount.log",
+  "rcloneLog": "/abs/path/rclone_nfs.log",
+  "rcloneMountLog": "/abs/path/rclone_mount.log",
+  "rcloneNfsLog": "/abs/path/rclone_nfs.log",
+  "rcloneNfsPidFile": "/abs/path/rclone_nfs.pid",
+  "rcloneNfsAddr": "127.0.0.1",
+  "rcloneNfsPort": "39091",
   "workflowJson": "/abs/path/n8n-workflow-pipeline-01.json",
   "bootstrapScript": "/abs/path/bootstrap_pipeline_01.sh"
 }
@@ -156,3 +162,10 @@ allowed stage values:
 | `driveSubpath` | `drive_subpath` |
 
 reader 実装は両系統を受けられる前提で扱うこと。  
+
+## Mount mode notes
+
+- `mountMode: "fuse"` は従来の `rclone mount`
+- `mountMode: "nfs"` は Darwin fallback の `rclone serve nfs` + `mount_nfs`
+
+`rcloneLog` は現在有効な mount mode の主ログを指す。  

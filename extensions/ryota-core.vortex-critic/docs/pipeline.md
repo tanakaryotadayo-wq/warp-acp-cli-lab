@@ -31,6 +31,8 @@ Pipeline① は、OSS repo を**packet 化して監査用 artifacts に落とす
 | `PIPELINE_01_STATUS_FILE` | status JSON path |
 | `PIPELINE_01_MOUNT_PATH` | rclone mount 先 |
 | `PIPELINE_01_RCLONE_REMOTE` / `PIPELINE_01_RCLONE_SUBPATH` | drive mount 元 |
+| `PIPELINE_01_RCLONE_BIN` | 優先して使う rclone binary |
+| `PIPELINE_01_RCLONE_NFS_ADDR` / `PIPELINE_01_RCLONE_NFS_PORT` | Darwin fallback 用の local NFS listen 先 |
 | `PIPELINE_01_N8N_COMPOSE` | compose file |
 | `PIPELINE_01_WORKFLOW_JSON` | workflow 定義 |
 | `PIPELINE_01_CBF_LAUNCHER` | `tmux` / `subprocess` |
@@ -46,6 +48,7 @@ Pipeline① は、OSS repo を**packet 化して監査用 artifacts に落とす
 - `mounted`
 - `cbfHealthy`
 - `n8nReady`
+- `mountMode`
 - `containerRuntime`
 - `dockerContext`
 - `cbfLauncher`
@@ -58,6 +61,10 @@ mount の代表的な失敗値:
 
 - `rclone_not_found`
 - `mount_not_visible`
+
+ただし Darwin では、macFUSE / FUSE-T が無い場合に
+`rclone mount` を無理に通さず、`rclone serve nfs` + `mount_nfs`
+へ fallback します。
 
 ## runner の厳密契約
 
@@ -136,6 +143,7 @@ agent の役割は「pipeline に投げる」までで、重い処理は queue w
 - CBF サーバーは既定で `tmux` singleton にできます。
 - `PIPELINE_01_CONTAINER_RUNTIME=auto` は `docker context show` を見て、`orbstack` context なら OrbStack 実験モードとして status に記録します。
 - n8n 自体の起動コマンドは引き続き `docker compose` ですが、OrbStack を docker backend にしていればそのまま OrbStack 上で動きます。
+- macOS で FUSE driver が無い場合でも、official rclone を `~/.local/bin/rclone` に置いておけば NFS fallback で mount を成立させられます。
 
 ## 非責務
 

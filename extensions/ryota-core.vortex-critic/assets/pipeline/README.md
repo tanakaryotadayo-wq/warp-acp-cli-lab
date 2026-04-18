@@ -9,6 +9,7 @@
 - CBF / n8n / mount 状態をまとめて status に出す
 - VORTEX サイドバーから状態を確認できるようにする
 - commit hook から queue へ積み、**issue-oriented follow-up** を非同期で回す
+- Darwin では FUSE が無くても NFS fallback で Google Drive mount を成立させる
 
 ## サブディレクトリ
 

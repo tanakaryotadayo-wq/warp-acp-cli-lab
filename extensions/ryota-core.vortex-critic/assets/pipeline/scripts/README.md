@@ -26,3 +26,10 @@ bash assets/pipeline/scripts/install_pipeline_01_git_hook.sh
 3. worker が必要なら自動起動  
 4. worker は `git archive <sha>` で **clean snapshot** を作り、その commit だけを Pipeline① に流す  
 5. 生成された issue candidate は 1 本の GitHub issue として publish できる  
+
+## Mount fallback on macOS
+
+- official rclone を `~/.local/bin/rclone` に置くと、bootstrap はそれを優先する  
+- macFUSE / FUSE-T が無い Darwin 環境では、`rclone mount` 失敗を放置せず  
+  `rclone serve nfs` + `mount_nfs` に fallback する  
+- status JSON の `mountMode` で `fuse` / `nfs` を判別できる  
