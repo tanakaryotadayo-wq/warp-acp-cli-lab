@@ -58,6 +58,98 @@ def _slugify(value: str, fallback: str = "ki_candidate") -> str:
     return normalized or fallback
 
 
+LOW_SIGNAL_TASK_PATTERNS = (
+    re.compile(r"\b(?:probe|full chain probe|smoke(?:\s+test)?|health check|ping)\b", re.IGNORECASE),
+    re.compile(r"\b(?:what token do you see|tell me what you see|what do you see|one short line|one-line summary)\b", re.IGNORECASE),
+    re.compile(r"(?:一行|一言|何が見える|見えてる)"),
+)
+
+FINAL_ANSWER_PATTERNS = (
+    re.compile(r"(?:^|\n)(?:final answer|short answer|answer|final|結論|回答|要点)\s*[:：]\s*(.+)", re.IGNORECASE | re.DOTALL),
+)
+
+REASONING_MARKERS = (
+    "thinking process",
+    "analyze the request",
+    "step-by-step",
+    "reasoning:",
+)
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def _looks_like_reasoning_dump(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in REASONING_MARKERS):
+        return True
+    return bool(re.search(r"^\s*1\.\s+\*\*.+?\*\*:", text or "", re.MULTILINE))
+
+
+def _extract_compact_result(result: str) -> str:
+    raw = (result or "").strip()
+    if not raw:
+        return ""
+
+    for pattern in FINAL_ANSWER_PATTERNS:
+        match = pattern.search(raw)
+        if match:
+            compact = _normalize_text(match.group(1))
+            if compact:
+                return compact[:400]
+
+    if not _looks_like_reasoning_dump(raw):
+        return _normalize_text(raw)[:400]
+
+    candidate_lines = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if not stripped:
+            continue
+        if lowered in {"thinking process:", "analysis:", "reasoning:"}:
+            continue
+        if stripped.startswith("#"):
+            continue
+        if re.match(r"^\d+\.\s+\*\*", stripped):
+            continue
+        if re.match(r"^[*-]\s+\*\*", stripped):
+            continue
+        if re.match(r"^[*-]\s+[A-Z][A-Za-z ]+:", stripped):
+            continue
+        candidate_lines.append(stripped)
+
+    if not candidate_lines:
+        return ""
+
+    tail = candidate_lines[-2:] if len(candidate_lines) >= 2 else candidate_lines
+    return _normalize_text(" ".join(tail))[:400]
+
+
+def _knowledge_skip_reason(task: str, result: str, tags: List[str]) -> Optional[str]:
+    normalized_task = _normalize_text(task)
+    normalized_result = _normalize_text(result)
+    lowered_tags = [tag.lower() for tag in tags]
+
+    if not normalized_task and not normalized_result:
+        return "empty_payload"
+
+    if any(pattern.search(normalized_task) for pattern in LOW_SIGNAL_TASK_PATTERNS):
+        return "low_signal_probe_task"
+
+    compact_result = _extract_compact_result(normalized_result)
+    if _looks_like_reasoning_dump(normalized_result) and not compact_result:
+        return "reasoning_dump_without_final_answer"
+
+    if "utility" in lowered_tags and len(normalized_task) < 160 and _looks_like_reasoning_dump(normalized_result):
+        return "utility_reasoning_probe"
+
+    return None
+
+
 # ─── KI Queue CRUD ───────────────────────────────────────────────────────────
 
 def load_queue() -> List[dict]:
@@ -86,7 +178,8 @@ def write_queue(entries: List[dict]) -> None:
 def _make_queue_entry(arguments: dict, log_file: Path) -> dict:
     task = arguments.get("task", "").strip()
     result = arguments.get("result", "").strip()
-    raw_title = task or result[:80] or "KI Candidate"
+    compact_result = _extract_compact_result(result)
+    raw_title = task or compact_result or result[:80] or "KI Candidate"
     fingerprint = hashlib.sha256(f"{task}\n{result}".encode("utf-8")).hexdigest()[:16]
     return {
         "id": f"ki_{fingerprint}",
@@ -94,9 +187,10 @@ def _make_queue_entry(arguments: dict, log_file: Path) -> dict:
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
         "title": raw_title[:120],
-        "summary": (result or task)[:400],
+        "summary": (compact_result or result or task)[:400],
         "task": task,
         "result": result,
+        "result_compact": compact_result,
         "cause": arguments.get("cause"),
         "fix": arguments.get("fix"),
         "tags": arguments.get("tags", []),
@@ -115,6 +209,7 @@ def _append_queue_entry(entry: dict) -> None:
                 "status": existing.get("status", "pending"),
                 "task": entry["task"],
                 "result": entry["result"],
+                "result_compact": entry.get("result_compact", ""),
                 "summary": entry["summary"],
                 "tags": entry.get("tags", []),
                 "log_file": entry["log_file"],
@@ -127,6 +222,7 @@ def _append_queue_entry(entry: dict) -> None:
 
 
 def _default_artifact_content(entry: dict, title: str) -> str:
+    result_body = entry.get("result_compact") or entry.get("summary") or entry.get("result", "")
     lines = [
         f"# {title}",
         "",
@@ -134,7 +230,7 @@ def _default_artifact_content(entry: dict, title: str) -> str:
         entry.get("task", ""),
         "",
         "## Result",
-        entry.get("result", ""),
+        result_body,
     ]
     if entry.get("fix"):
         lines.extend(["", "## Fix", entry["fix"]])
@@ -196,23 +292,16 @@ def emit_fleet_log(event_type: str, task: str, result: str, route_id: str = "") 
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
         if event_type == "success":
-            KI_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            fingerprint = hashlib.sha256(f"{task}\n{result}".encode()).hexdigest()[:16]
-            qi = {
-                "id": f"ki_{fingerprint}",
-                "status": "pending",
-                "created_at": entry["timestamp"],
-                "updated_at": entry["timestamp"],
-                "title": task[:120],
-                "summary": result[:400],
-                "task": task[:400],
-                "result": result[:800],
-                "tags": entry["tags"],
-                "suggested_ki_name": re.sub(r"[^a-zA-Z0-9_-]+", "_", task.lower().strip())[:60] or "ki_candidate",
-                "log_file": str(log_file),
-            }
-            with open(KI_QUEUE_FILE, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(qi, ensure_ascii=False) + "\n")
+            skip_reason = _knowledge_skip_reason(task, result, entry["tags"])
+            if skip_reason is None:
+                queue_entry = _make_queue_entry({
+                    "task": task[:400],
+                    "result": result[:800],
+                    "tags": entry["tags"],
+                }, log_file)
+                _append_queue_entry(queue_entry)
+            else:
+                _log.debug("skip KI queue for fleet_log success: %s", skip_reason)
     except Exception as exc:
         _log.debug("fleet_log emit failed (non-fatal): %s", exc)
 
@@ -294,8 +383,18 @@ def handle_fleet_log(arguments: dict) -> dict:
 
     queue_entry = None
     if entry.get("event_type") == "success" and (entry.get("task") or entry.get("result")):
-        queue_entry = _make_queue_entry(arguments, log_file)
-        _append_queue_entry(queue_entry)
+        skip_reason = _knowledge_skip_reason(str(entry.get("task", "")), str(entry.get("result", "")), list(entry.get("tags", [])))
+        if skip_reason is None:
+            queue_entry = _make_queue_entry(arguments, log_file)
+            _append_queue_entry(queue_entry)
+        else:
+            result: Dict[str, Any] = {
+                "status": "logged",
+                "file": str(log_file),
+                "entry": entry,
+                "ki_skipped_reason": skip_reason,
+            }
+            return result
 
     result: Dict[str, Any] = {"status": "logged", "file": str(log_file), "entry": entry}
     if queue_entry is not None:

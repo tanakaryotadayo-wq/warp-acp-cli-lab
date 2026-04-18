@@ -664,6 +664,7 @@ interface KiQueueEntry {
   summary?: string;
   task?: string;
   result?: string;
+  result_compact?: string;
   cause?: string;
   fix?: string;
   tags?: string[];
@@ -998,6 +999,7 @@ async function fetchBridgeRuntimeStatus(): Promise<BridgeRuntimeStatus> {
 }
 
 function buildKiArtifactMarkdown(entry: KiQueueEntry, title: string): string {
+  const resultBody = entry.result_compact || entry.summary || entry.result || '';
   const sections = [
     `# ${title}`,
     '',
@@ -1005,7 +1007,7 @@ function buildKiArtifactMarkdown(entry: KiQueueEntry, title: string): string {
     entry.task || '',
     '',
     '## Result',
-    entry.result || '',
+    resultBody,
   ];
   if (entry.fix) {
     sections.push('', '## Fix', entry.fix);

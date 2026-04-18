@@ -122,7 +122,7 @@ vortex-critic/
 タスク完了
   ↓ _emit_fleet_log() [daemon thread, 非ブロック]
 fleet_YYYYMMDD.jsonl  ← 構造化ログ
-  ↓ success なら自動
+  ↓ success なら quality gate
 ki-promotion-queue.jsonl  ← KI 候補
   ↓ handle_ki_queue_promote()
 knowledge/<ki_name>/
@@ -134,6 +134,9 @@ ConversationMemory.index_knowledge()
   ↓ build_newgate_context()
 _try_recall(query)  → [Memory Recall] ブロック注入
 ```
+
+- low-signal probe / smoke / `Thinking Process:` ダンプは **KI 候補から落とす**
+- summary / artifact は raw reasoning より **compact final answer** を優先する
 
 ### 5. ベクトル化
 
