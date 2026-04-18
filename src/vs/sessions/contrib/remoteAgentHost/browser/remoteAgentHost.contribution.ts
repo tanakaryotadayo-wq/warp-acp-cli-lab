@@ -391,7 +391,7 @@ export class RemoteAgentHostContribution extends Disposable implements IWorkbenc
 		}));
 
 		// Customization harness for this remote agent
-		const itemProvider = agentStore.add(new RemoteAgentCustomizationItemProvider(agent, loggedConnection));
+		const itemProvider = agentStore.add(new RemoteAgentCustomizationItemProvider(agent, loggedConnection, this._agentPluginService));
 		const syncProvider = agentStore.add(new AgentCustomizationSyncProvider(sessionType, this._storageService));
 		const harnessDescriptor = createRemoteAgentHarnessDescriptor(sessionType, displayName, itemProvider, syncProvider);
 		agentStore.add(this._customizationHarnessService.registerExternalHarness(harnessDescriptor));
