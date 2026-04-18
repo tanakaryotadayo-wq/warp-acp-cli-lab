@@ -260,6 +260,13 @@
 	"vortex.actionServer.enable": true,
 	"vortex.actionServer.port": 19800,
 	"vortex.actionServer.allowedActions": ["openFile", "insertText", "applyDiff", "runCommand"],
+	// Jules worker lane
+	"vortex.jules.enablePolling": true,
+	"vortex.jules.pollInterval": 120000,
+	"vortex.jules.searchQuery": "involves:@me \"jules\" is:open is:issue",
+	"vortex.jules.notifyOnAwaitingFeedback": true,
+	"vortex.jules.notifyOnCompletion": true,
+	"vortex.jules.notifyOnLinkedPr": true,
 	// Quality Gate
 	"vortex.autoAuditOnSave": false,
 	"vortex.preset": "監"

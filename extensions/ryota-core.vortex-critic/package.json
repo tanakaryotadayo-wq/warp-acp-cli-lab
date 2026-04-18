@@ -232,6 +232,186 @@
           "type": "number",
           "default": 8765,
           "description": "Gemini Code Assist bridge の待受ポート"
+        },
+        "vortex.runtime.backgroundLauncher": {
+          "type": "string",
+          "enum": [
+            "tmux",
+            "subprocess"
+          ],
+          "default": "tmux",
+          "description": "Gemini Bridge や Pipeline① CBF のような常駐バックグラウンド処理の起動方法"
+        },
+        "vortex.geminiBridgeTmuxSession": {
+          "type": "string",
+          "default": "vortex-gemini-bridge",
+          "description": "Gemini Bridge を tmux で起動するときの session 名"
+        },
+        "vortex.pipelineOneCbfTmuxSession": {
+          "type": "string",
+          "default": "vortex-pipeline-cbf",
+          "description": "Pipeline① の CBF サーバーを tmux で起動するときの session 名"
+        },
+        "vortex.pipelineOneContainerRuntime": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "orbstack",
+            "docker"
+          ],
+          "default": "auto",
+          "description": "Pipeline① の container runtime。auto は現在の docker context を見て OrbStack を検出"
+        },
+
+        "vortex.fusionGateUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:9800",
+          "description": "Fusion Gate の URL"
+        },
+        "vortex.fleet.utilityEndpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:8101",
+          "description": "Utility レーン（Qwen 3.5 9B）の URL"
+        },
+        "vortex.fleet.agentEndpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:8102",
+          "description": "Agent レーン（Qwen3 Coder 80B）の URL"
+        },
+        "vortex.fleet.conversationEndpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:8103",
+          "description": "Conversation レーン（Gemma 4 26B）の URL"
+        },
+        "vortex.fleet.embeddingEndpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:8093/v1/embeddings",
+          "description": "Embedding エンドポイント（NV-Embed-v2 4096d）の URL"
+        },
+        "vortex.fleet.embeddingModel": {
+          "type": "string",
+          "default": "nv-embed-v2",
+          "description": "Embedding モデル名"
+        },
+        "vortex.fleet.healthCheckInterval": {
+          "type": "number",
+          "default": 30000,
+          "description": "フリート死活チェック間隔（ms）。0で無効",
+          "minimum": 0
+        },
+
+        "vortex.memory.recallOnActivate": {
+          "type": "boolean",
+          "default": true,
+          "description": "拡張アクティベーション時に Sovereign Memory から自動 recall を実行"
+        },
+        "vortex.memory.autoIndexOnPromote": {
+          "type": "boolean",
+          "default": true,
+          "description": "KI 昇格時に自動でベクトルインデックスを更新"
+        },
+        "vortex.memory.brainDir": {
+          "type": "string",
+          "default": "",
+          "description": "Sovereign Memory brain ディレクトリ（空なら ~/.gemini/antigravity/brain）"
+        },
+
+        "vortex.harvest.enable": {
+          "type": "boolean",
+          "default": false,
+          "description": "LSP パケットから AST/シンボル情報を自動収集"
+        },
+        "vortex.harvest.semanticDiff": {
+          "type": "boolean",
+          "default": false,
+          "description": "ファイル変更時にセマンティック差分を計算"
+        },
+        "vortex.harvest.packetDbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Harvest で書き込む neural_packets.db のパス（空なら ~/Newgate/intelligence/neural_packets.db）"
+        },
+        "vortex.harvest.targetLanguages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["typescript", "python", "javascript"],
+          "description": "Harvest 対象の言語ID"
+        },
+
+        "vortex.stateStream.enable": {
+          "type": "boolean",
+          "default": false,
+          "description": "エディタ状態をバックエンドへストリーミング"
+        },
+        "vortex.stateStream.endpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:9800/v1/ide/state",
+          "description": "State payload の送信先エンドポイント"
+        },
+        "vortex.stateStream.interval": {
+          "type": "number",
+          "default": 5000,
+          "description": "State 送信間隔（ms）",
+          "minimum": 1000
+        },
+        "vortex.stateStream.includeDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "State に LSP diagnostics を含める"
+        },
+        "vortex.stateStream.includeGit": {
+          "type": "boolean",
+          "default": true,
+          "description": "State に Git 状態（branch / changes）を含める"
+        },
+
+        "vortex.actionServer.enable": {
+          "type": "boolean",
+          "default": false,
+          "description": "AI からのアクション命令（ファイル編集、diff 適用等）を受け付ける"
+        },
+        "vortex.actionServer.port": {
+          "type": "number",
+          "default": 19800,
+          "description": "Action Server のリッスンポート"
+        },
+        "vortex.actionServer.allowedActions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["openFile", "insertText", "applyDiff", "runCommand"],
+          "description": "許可するアクション種別（セキュリティフィルター）"
+        },
+
+        "vortex.jules.enablePolling": {
+          "type": "boolean",
+          "default": true,
+          "description": "Jules worker lane の GitHub issue queue を定期ポーリングする"
+        },
+        "vortex.jules.pollInterval": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 30000,
+          "description": "Jules worker lane のポーリング間隔（ms）。時間差前提なので既定は120秒"
+        },
+        "vortex.jules.searchQuery": {
+          "type": "string",
+          "default": "involves:@me \"jules\" is:open is:issue",
+          "description": "Jules worker lane 監視に使う GitHub issue search query"
+        },
+        "vortex.jules.notifyOnAwaitingFeedback": {
+          "type": "boolean",
+          "default": true,
+          "description": "Jules が human feedback 待ちに入ったとき通知する"
+        },
+        "vortex.jules.notifyOnCompletion": {
+          "type": "boolean",
+          "default": true,
+          "description": "Jules issue が active queue から消えたとき完了候補として通知する"
+        },
+        "vortex.jules.notifyOnLinkedPr": {
+          "type": "boolean",
+          "default": true,
+          "description": "Jules issue から新しい PR リンクが見つかったとき通知する"
         }
       }
     }

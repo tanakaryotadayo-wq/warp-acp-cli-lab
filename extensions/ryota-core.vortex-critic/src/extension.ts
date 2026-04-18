@@ -57,6 +57,582 @@ const DEFAULT_ANTIGRAVITY_SETTINGS_PATH = path.join(
   process.env.HOME ?? '/Users/ryyota',
   'Library/Application Support/Antigravity/User/settings.json'
 );
+const DEFAULT_BRAIN_DIR = path.join(
+  process.env.HOME ?? '/Users/ryyota',
+  '.gemini/antigravity/brain'
+);
+const DEFAULT_HARVEST_PACKET_DB = path.join(
+  process.env.HOME ?? '/Users/ryyota',
+  'Newgate/intelligence/neural_packets.db'
+);
+
+// ── AI OS Configuration Readers ─────────────────────────────────────────────
+
+function getVortexConfig() {
+  return vscode.workspace.getConfiguration('vortex');
+}
+
+function getFusionGateUrl(): string {
+  return getVortexConfig().get<string>('fusionGateUrl')?.trim() || 'http://127.0.0.1:9800';
+}
+
+interface FleetEndpoints {
+  utility: string;
+  agent: string;
+  conversation: string;
+  embedding: string;
+  embeddingModel: string;
+  fusionGate: string;
+}
+
+function getFleetEndpoints(): FleetEndpoints {
+  const cfg = getVortexConfig();
+  return {
+    utility: cfg.get<string>('fleet.utilityEndpoint')?.trim() || 'http://127.0.0.1:8101',
+    agent: cfg.get<string>('fleet.agentEndpoint')?.trim() || 'http://127.0.0.1:8102',
+    conversation: cfg.get<string>('fleet.conversationEndpoint')?.trim() || 'http://127.0.0.1:8103',
+    embedding: cfg.get<string>('fleet.embeddingEndpoint')?.trim() || 'http://127.0.0.1:8093/v1/embeddings',
+    embeddingModel: cfg.get<string>('fleet.embeddingModel')?.trim() || 'nv-embed-v2',
+    fusionGate: getFusionGateUrl(),
+  };
+}
+
+function getFleetHealthCheckInterval(): number {
+  return getVortexConfig().get<number>('fleet.healthCheckInterval') ?? 30000;
+}
+
+function getBrainDir(): string {
+  return getVortexConfig().get<string>('memory.brainDir')?.trim() || DEFAULT_BRAIN_DIR;
+}
+
+function getHarvestPacketDbPath(): string {
+  return getVortexConfig().get<string>('harvest.packetDbPath')?.trim() || DEFAULT_HARVEST_PACKET_DB;
+}
+
+function getHarvestTargetLanguages(): string[] {
+  return getVortexConfig().get<string[]>('harvest.targetLanguages') ?? ['typescript', 'python', 'javascript'];
+}
+
+interface JulesIssueLabel {
+  name: string;
+}
+
+interface JulesIssue {
+  id: number;
+  number: number;
+  title: string;
+  body?: string;
+  html_url: string;
+  comments_url: string;
+  updated_at: string;
+  created_at: string;
+  state: string;
+  labels?: JulesIssueLabel[];
+}
+
+interface JulesIssueSnapshot {
+  id: number;
+  number: number;
+  title: string;
+  htmlUrl: string;
+  updatedAt: string;
+  awaitingFeedback: boolean;
+  linkedPrs: string[];
+}
+
+let julesPanel: vscode.WebviewPanel | undefined;
+let julesPanelReady = false;
+let julesPollTimer: ReturnType<typeof setInterval> | undefined;
+let lastJulesSnapshots = new Map<number, JulesIssueSnapshot>();
+let latestJulesToken = '';
+
+function isJulesPollingEnabled(): boolean {
+  return getVortexConfig().get<boolean>('jules.enablePolling') ?? true;
+}
+
+function getJulesPollInterval(): number {
+  const configured = getVortexConfig().get<number>('jules.pollInterval') ?? 120000;
+  return Number.isFinite(configured) && configured >= 30000 ? configured : 120000;
+}
+
+function getJulesSearchQuery(): string {
+  return getVortexConfig().get<string>('jules.searchQuery')?.trim() || 'involves:@me "jules" is:open is:issue';
+}
+
+function shouldNotifyOnJulesAwaitingFeedback(): boolean {
+  return getVortexConfig().get<boolean>('jules.notifyOnAwaitingFeedback') ?? true;
+}
+
+function shouldNotifyOnJulesCompletion(): boolean {
+  return getVortexConfig().get<boolean>('jules.notifyOnCompletion') ?? true;
+}
+
+function shouldNotifyOnJulesLinkedPr(): boolean {
+  return getVortexConfig().get<boolean>('jules.notifyOnLinkedPr') ?? true;
+}
+
+function isJulesAwaitingFeedback(labels?: JulesIssueLabel[]): boolean {
+  const names = (labels ?? []).map((label) => label.name.toLowerCase());
+  return names.some((name) =>
+    ['awaiting', 'feedback', 'needs-human', 'needs-user', 'question', 'review'].some((keyword) => name.includes(keyword))
+  );
+}
+
+function extractPullRequestUrls(text?: string): string[] {
+  if (!text) {
+    return [];
+  }
+  const matches = text.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/g) ?? [];
+  return Array.from(new Set(matches));
+}
+
+function buildJulesSnapshot(issue: JulesIssue): JulesIssueSnapshot {
+  return {
+    id: issue.id,
+    number: issue.number,
+    title: issue.title,
+    htmlUrl: issue.html_url,
+    updatedAt: issue.updated_at,
+    awaitingFeedback: isJulesAwaitingFeedback(issue.labels),
+    linkedPrs: extractPullRequestUrls(issue.body),
+  };
+}
+
+async function getGitHubRepoToken(createIfNone: boolean): Promise<string | undefined> {
+  try {
+    const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone });
+    return session?.accessToken;
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchJulesIssues(token: string): Promise<JulesIssue[]> {
+  const response = await (globalThis as any).fetch(
+    `https://api.github.com/search/issues?q=${encodeURIComponent(getJulesSearchQuery())}&per_page=50&sort=updated&order=desc`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+      signal: AbortSignal.timeout(5000),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`GitHub API ${response.status}: ${response.statusText}`);
+  }
+
+  const data = await response.json() as { items?: JulesIssue[] };
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+async function openExternalUrl(url: string): Promise<void> {
+  await vscode.env.openExternal(vscode.Uri.parse(url));
+}
+
+async function notifyJulesAwaitingFeedback(issue: JulesIssueSnapshot): Promise<void> {
+  const action = await vscode.window.showInformationMessage(
+    `Jules が返信待ちです: #${issue.number} ${issue.title}`,
+    'Issue を開く',
+    'Dashboard を開く'
+  );
+  if (action === 'Issue を開く') {
+    await openExternalUrl(issue.htmlUrl);
+  } else if (action === 'Dashboard を開く') {
+    await vscode.commands.executeCommand('vortex.openAsyncTaskDashboard');
+  }
+}
+
+async function notifyJulesLinkedPr(issue: JulesIssueSnapshot, prUrl: string): Promise<void> {
+  const action = await vscode.window.showInformationMessage(
+    `Jules が PR を参照しました: #${issue.number} ${issue.title}`,
+    'PR を開く',
+    'Issue を開く'
+  );
+  if (action === 'PR を開く') {
+    await openExternalUrl(prUrl);
+  } else if (action === 'Issue を開く') {
+    await openExternalUrl(issue.htmlUrl);
+  }
+}
+
+async function notifyJulesCompletion(issue: JulesIssueSnapshot): Promise<void> {
+  const action = await vscode.window.showInformationMessage(
+    `Jules issue が active queue から外れました: #${issue.number} ${issue.title}`,
+    'Dashboard を開く',
+    'Issue を開く'
+  );
+  if (action === 'Dashboard を開く') {
+    await vscode.commands.executeCommand('vortex.openAsyncTaskDashboard');
+  } else if (action === 'Issue を開く') {
+    await openExternalUrl(issue.htmlUrl);
+  }
+}
+
+async function syncJulesIssues(options?: {
+  createSessionIfNeeded?: boolean;
+  notify?: boolean;
+  resetPanel?: boolean;
+}): Promise<JulesIssue[]> {
+  const token = latestJulesToken || await getGitHubRepoToken(options?.createSessionIfNeeded ?? false);
+  if (!token) {
+    throw new Error('GitHub Authentication is required to access Jules operations.');
+  }
+
+  latestJulesToken = token;
+  const issues = await fetchJulesIssues(token);
+  const nextSnapshots = new Map<number, JulesIssueSnapshot>(
+    issues.map((issue) => [issue.id, buildJulesSnapshot(issue)])
+  );
+
+  if (options?.notify && lastJulesSnapshots.size > 0) {
+    for (const issue of issues) {
+      const next = nextSnapshots.get(issue.id);
+      const previous = lastJulesSnapshots.get(issue.id);
+      if (!next || !previous) {
+        continue;
+      }
+      if (!previous.awaitingFeedback && next.awaitingFeedback && shouldNotifyOnJulesAwaitingFeedback()) {
+        void notifyJulesAwaitingFeedback(next);
+      }
+      if (shouldNotifyOnJulesLinkedPr()) {
+        const newLinkedPr = next.linkedPrs.find((url) => !previous.linkedPrs.includes(url));
+        if (newLinkedPr) {
+          void notifyJulesLinkedPr(next, newLinkedPr);
+        }
+      }
+    }
+
+    if (shouldNotifyOnJulesCompletion()) {
+      for (const previous of lastJulesSnapshots.values()) {
+        if (!nextSnapshots.has(previous.id)) {
+          void notifyJulesCompletion(previous);
+        }
+      }
+    }
+  }
+
+  lastJulesSnapshots = nextSnapshots;
+
+  if (julesPanel) {
+    if (options?.resetPanel || !julesPanelReady) {
+      julesPanel.webview.html = getJulesHtml(JSON.stringify(issues), false);
+      julesPanelReady = true;
+    } else {
+      void julesPanel.webview.postMessage({ command: 'replaceIssues', issues });
+    }
+  }
+
+  return issues;
+}
+
+function startJulesPolling() {
+  if (!isJulesPollingEnabled()) {
+    return;
+  }
+
+  const interval = getJulesPollInterval();
+  const poll = async () => {
+    try {
+      await syncJulesIssues({ notify: true });
+    } catch {
+      // GitHub auth may not be available yet; polling should fail-soft.
+    }
+  };
+
+  void poll();
+  julesPollTimer = setInterval(() => {
+    void poll();
+  }, interval);
+}
+
+function stopJulesPolling() {
+  if (julesPollTimer) {
+    clearInterval(julesPollTimer);
+    julesPollTimer = undefined;
+  }
+}
+
+// ── Fleet Health Check ──────────────────────────────────────────────────────
+
+interface FleetHealth {
+  [key: string]: { url: string; alive: boolean; latencyMs: number; error?: string };
+}
+
+let currentFleetHealth: FleetHealth = {};
+let fleetHealthTimer: ReturnType<typeof setInterval> | undefined;
+
+async function checkEndpointHealth(name: string, url: string): Promise<{ alive: boolean; latencyMs: number; error?: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  const start = Date.now();
+  try {
+    const baseUrl = url.replace(/\/v1\/.*$/, '');
+    const response = await (globalThis as any).fetch(baseUrl, { signal: controller.signal, method: 'GET' });
+    return { alive: response.ok || response.status < 500, latencyMs: Date.now() - start };
+  } catch (error: any) {
+    return { alive: false, latencyMs: Date.now() - start, error: error?.name === 'AbortError' ? 'timeout' : (error?.message ?? 'unknown') };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runFleetHealthCheck(): Promise<FleetHealth> {
+  const endpoints = getFleetEndpoints();
+  const checks = await Promise.all([
+    checkEndpointHealth('Fusion Gate', endpoints.fusionGate).then(r => ['fusionGate', { url: endpoints.fusionGate, ...r }] as const),
+    checkEndpointHealth('Utility (Qwen 3.5)', endpoints.utility).then(r => ['utility', { url: endpoints.utility, ...r }] as const),
+    checkEndpointHealth('Agent (Qwen3 Coder)', endpoints.agent).then(r => ['agent', { url: endpoints.agent, ...r }] as const),
+    checkEndpointHealth('Conversation (Gemma 4)', endpoints.conversation).then(r => ['conversation', { url: endpoints.conversation, ...r }] as const),
+    checkEndpointHealth('Embedding (NV-Embed)', endpoints.embedding).then(r => ['embedding', { url: endpoints.embedding, ...r }] as const),
+  ]);
+  const health: FleetHealth = {};
+  for (const [name, result] of checks) {
+    health[name] = result;
+  }
+  currentFleetHealth = health;
+  return health;
+}
+
+function startFleetHealthCheck(statusBar: vscode.StatusBarItem) {
+  const interval = getFleetHealthCheckInterval();
+  if (interval <= 0) { return; }
+
+  const update = async () => {
+    const health = await runFleetHealthCheck();
+    const aliveCount = Object.values(health).filter(h => h.alive).length;
+    const total = Object.values(health).length;
+    statusBar.text = `$(shield) VORTEX ${aliveCount}/${total}`;
+    statusBar.tooltip = Object.entries(health)
+      .map(([name, h]) => `${h.alive ? '🟢' : '🔴'} ${name}: ${h.alive ? `${h.latencyMs}ms` : (h.error ?? 'down')}`)
+      .join('\n');
+  };
+
+  void update();
+  fleetHealthTimer = setInterval(update, interval);
+}
+
+function stopFleetHealthCheck() {
+  if (fleetHealthTimer) {
+    clearInterval(fleetHealthTimer);
+    fleetHealthTimer = undefined;
+  }
+}
+
+// ── State Streaming ─────────────────────────────────────────────────────────
+
+let stateStreamTimer: ReturnType<typeof setInterval> | undefined;
+
+function buildStatePayload(): any {
+  const editor = vscode.window.activeTextEditor;
+  const doc = editor?.document;
+  const cfg = getVortexConfig();
+
+  const payload: any = {
+    type: 'ide-state',
+    timestamp: Date.now(),
+    editor: doc ? {
+      fileName: doc.fileName,
+      languageId: doc.languageId,
+      lineCount: doc.lineCount,
+      cursor: editor?.selection.active ? { line: editor.selection.active.line, character: editor.selection.active.character } : null,
+      isDirty: doc.isDirty,
+    } : null,
+    workspace: {
+      root: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
+      openFiles: vscode.workspace.textDocuments.map(d => d.fileName),
+    },
+    fleet: currentFleetHealth,
+  };
+
+  if (cfg.get<boolean>('stateStream.includeDiagnostics') && doc) {
+    payload.diagnostics = vscode.languages.getDiagnostics(doc.uri).map(d => ({
+      message: d.message,
+      severity: d.severity,
+      range: { start: { line: d.range.start.line, character: d.range.start.character }, end: { line: d.range.end.line, character: d.range.end.character } },
+    }));
+  }
+
+  if (cfg.get<boolean>('stateStream.includeGit')) {
+    try {
+      const gitExt = vscode.extensions.getExtension('vscode.git')?.exports;
+      const repo = gitExt?.getAPI(1)?.repositories?.[0];
+      if (repo) {
+        payload.git = {
+          branch: repo.state?.HEAD?.name ?? null,
+          changedFiles: repo.state?.workingTreeChanges?.length ?? 0,
+        };
+      }
+    } catch { /* git not available */ }
+  }
+
+  return payload;
+}
+
+function startStateStreaming() {
+  const cfg = getVortexConfig();
+  if (!cfg.get<boolean>('stateStream.enable')) { return; }
+
+  const endpoint = cfg.get<string>('stateStream.endpoint') ?? 'http://127.0.0.1:9800/v1/ide/state';
+  const interval = cfg.get<number>('stateStream.interval') ?? 5000;
+
+  const send = async () => {
+    try {
+      const payload = buildStatePayload();
+      await (globalThis as any).fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(3000),
+      });
+    } catch { /* endpoint may not exist yet — silent fail */ }
+  };
+
+  stateStreamTimer = setInterval(send, interval);
+}
+
+function stopStateStreaming() {
+  if (stateStreamTimer) {
+    clearInterval(stateStreamTimer);
+    stateStreamTimer = undefined;
+  }
+}
+
+// ── Action Server ───────────────────────────────────────────────────────────
+
+import * as http from 'http';
+
+let actionServer: http.Server | undefined;
+
+async function handleAction(action: any): Promise<{ ok: boolean; message: string }> {
+  const cfg = getVortexConfig();
+  const allowed = cfg.get<string[]>('actionServer.allowedActions') ?? ['openFile', 'insertText', 'applyDiff', 'runCommand'];
+
+  if (!allowed.includes(action?.action)) {
+    return { ok: false, message: `Action "${action?.action}" is not in allowedActions` };
+  }
+
+  switch (action.action) {
+    case 'openFile': {
+      const doc = await vscode.workspace.openTextDocument(action.file);
+      await vscode.window.showTextDocument(doc);
+      return { ok: true, message: `Opened ${action.file}` };
+    }
+    case 'insertText': {
+      const doc = await vscode.workspace.openTextDocument(action.file);
+      const editor = await vscode.window.showTextDocument(doc);
+      await editor.edit(edit => {
+        edit.insert(new vscode.Position(action.position?.line ?? 0, action.position?.character ?? 0), action.text ?? '');
+      });
+      return { ok: true, message: `Inserted text at ${action.position?.line}:${action.position?.character}` };
+    }
+    case 'runCommand': {
+      await vscode.commands.executeCommand(action.command, ...(action.args ?? []));
+      return { ok: true, message: `Executed command: ${action.command}` };
+    }
+    case 'applyDiff': {
+      // Future: unified diff parser
+      return { ok: false, message: 'applyDiff not yet implemented' };
+    }
+    default:
+      return { ok: false, message: `Unknown action: ${action.action}` };
+  }
+}
+
+function startActionServer() {
+  const cfg = getVortexConfig();
+  if (!cfg.get<boolean>('actionServer.enable')) { return; }
+
+  const port = cfg.get<number>('actionServer.port') ?? 19800;
+
+  actionServer = http.createServer(async (req, res) => {
+    // Security: localhost only
+    const remoteAddr = req.socket.remoteAddress ?? '';
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddr)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, message: 'localhost only' }));
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, type: 'vortex-action-server', fleet: currentFleetHealth }));
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/state') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(buildStatePayload()));
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/action') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const action = JSON.parse(body);
+          const result = await handleAction(action);
+          res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (error: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: error?.message ?? 'internal error' }));
+        }
+      });
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, message: 'Not found. Available: GET /health, GET /state, POST /action' }));
+  });
+
+  actionServer.listen(port, '127.0.0.1', () => {
+    console.log(`VORTEX Action Server listening on http://127.0.0.1:${port}`);
+  });
+
+  actionServer.on('error', (err: any) => {
+    console.error('VORTEX Action Server failed to start:', err?.message ?? err);
+    actionServer = undefined;
+  });
+}
+
+function stopActionServer() {
+  if (actionServer) {
+    actionServer.close();
+    actionServer = undefined;
+  }
+}
+
+// ── Sovereign Memory Recall ─────────────────────────────────────────────────
+
+async function runSovereignMemoryRecall(channel: vscode.OutputChannel) {
+  const cfg = getVortexConfig();
+  if (!cfg.get<boolean>('memory.recallOnActivate')) { return; }
+
+  const fusionGateUrl = getFusionGateUrl();
+  const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name ?? 'unknown';
+
+  try {
+    const response = await (globalThis as any).fetch(`${fusionGateUrl}/v1/memory/recall`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: workspaceName, top_k: 5 }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      channel.appendLine('[Memory Recall] Success');
+      channel.appendLine(JSON.stringify(data, null, 2));
+    } else {
+      channel.appendLine(`[Memory Recall] HTTP ${response.status}`);
+    }
+  } catch (error: any) {
+    channel.appendLine(`[Memory Recall] ${error?.message ?? 'failed'} (Fusion Gate may not be running)`);
+  }
+}
 
 interface NewgateStatus {
   connected: boolean;
@@ -68,6 +644,17 @@ interface NewgateStatus {
   p0Count: number;
   error?: string;
   profile?: any;
+}
+
+interface BridgeRuntimeStatus {
+  configured: boolean;
+  statusPath: string;
+  running: boolean;
+  bridgeUrl: string;
+  launcher: string;
+  tmuxSession?: string;
+  note?: string;
+  error?: string;
 }
 
 interface KiQueueEntry {
@@ -107,6 +694,10 @@ interface PipelineOneStatus {
   mounted: boolean;
   cbfHealthy: boolean;
   n8nReady: boolean;
+  containerRuntime?: string;
+  dockerContext?: string;
+  cbfLauncher?: string;
+  cbfTmuxSession?: string;
   packetCount: number;
   issueCount: number;
   eckRuns: number;
@@ -195,6 +786,29 @@ function getPipelineOneRunnerScript(context: vscode.ExtensionContext): string {
 function getGeminiBridgePort(): number {
   const configured = vscode.workspace.getConfiguration('vortex').get<number>('geminiBridgePort');
   return configured && Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_GEMINI_BRIDGE_PORT;
+}
+
+function getBackgroundLauncher(): string {
+  const configured = vscode.workspace.getConfiguration('vortex').get<string>('runtime.backgroundLauncher')?.trim().toLowerCase();
+  return configured === 'subprocess' ? 'subprocess' : 'tmux';
+}
+
+function getGeminiBridgeTmuxSession(): string {
+  return vscode.workspace.getConfiguration('vortex').get<string>('geminiBridgeTmuxSession')?.trim()
+    || 'vortex-gemini-bridge';
+}
+
+function getPipelineOneCbfTmuxSession(): string {
+  return vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneCbfTmuxSession')?.trim()
+    || 'vortex-pipeline-cbf';
+}
+
+function getPipelineOneContainerRuntime(): string {
+  const configured = vscode.workspace.getConfiguration('vortex').get<string>('pipelineOneContainerRuntime')?.trim().toLowerCase();
+  if (configured === 'docker' || configured === 'orbstack') {
+    return configured;
+  }
+  return 'auto';
 }
 
 function getGeminiBridgeStatusPath(): string {
@@ -288,6 +902,10 @@ async function fetchPipelineOneStatus(): Promise<PipelineOneStatus> {
       mounted: false,
       cbfHealthy: false,
       n8nReady: false,
+      containerRuntime: 'auto',
+      dockerContext: '',
+      cbfLauncher: getBackgroundLauncher(),
+      cbfTmuxSession: getPipelineOneCbfTmuxSession(),
       packetCount: 0,
       issueCount: 0,
       eckRuns: 0,
@@ -306,10 +924,16 @@ async function fetchPipelineOneStatus(): Promise<PipelineOneStatus> {
       mounted: Boolean(raw.mounted ?? false),
       cbfHealthy: Boolean(raw.cbfHealthy ?? raw.cbf?.packetized),
       n8nReady: Boolean(raw.n8nReady ?? false),
+      containerRuntime: String(raw.containerRuntime ?? 'auto'),
+      dockerContext: String(raw.dockerContext ?? ''),
+      cbfLauncher: String(raw.cbfLauncher ?? getBackgroundLauncher()),
+      cbfTmuxSession: raw.cbfTmuxSession ? String(raw.cbfTmuxSession) : getPipelineOneCbfTmuxSession(),
       packetCount: Number(raw.packet_summary?.count ?? raw.packetCount ?? 0),
       issueCount: Number(raw.issue_count ?? raw.issueCount ?? 0),
       eckRuns: Number(raw.eck?.bridge?.runs ?? raw.eckRuns ?? 0),
-      error: raw.error ? String(raw.error) : (raw.mountError ? String(raw.mountError) : undefined),
+      error: raw.error
+        ? String(raw.error)
+        : (raw.mountError ? String(raw.mountError) : (raw.containerRuntimeNote ? String(raw.containerRuntimeNote) : undefined)),
     };
   } catch (error: any) {
     return {
@@ -321,9 +945,53 @@ async function fetchPipelineOneStatus(): Promise<PipelineOneStatus> {
       mounted: false,
       cbfHealthy: false,
       n8nReady: false,
+      containerRuntime: 'auto',
+      dockerContext: '',
+      cbfLauncher: getBackgroundLauncher(),
+      cbfTmuxSession: getPipelineOneCbfTmuxSession(),
       packetCount: 0,
       issueCount: 0,
       eckRuns: 0,
+      error: error?.message ?? 'status parse failed',
+    };
+  }
+}
+
+async function fetchBridgeRuntimeStatus(): Promise<BridgeRuntimeStatus> {
+  const statusPath = getGeminiBridgeStatusPath();
+  const bridgeUrl = `http://127.0.0.1:${getGeminiBridgePort()}`;
+  if (!fs.existsSync(statusPath)) {
+    return {
+      configured: false,
+      statusPath,
+      running: false,
+      bridgeUrl,
+      launcher: getBackgroundLauncher(),
+      tmuxSession: getGeminiBridgeTmuxSession(),
+      error: 'status.json がまだありません',
+    };
+  }
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+    return {
+      configured: true,
+      statusPath,
+      running: Boolean(raw.running ?? false),
+      bridgeUrl: String(raw.bridgeUrl ?? bridgeUrl),
+      launcher: String(raw.launcher ?? getBackgroundLauncher()),
+      tmuxSession: raw.tmuxSession ? String(raw.tmuxSession) : getGeminiBridgeTmuxSession(),
+      note: raw.note ? String(raw.note) : undefined,
+      error: raw.error ? String(raw.error) : undefined,
+    };
+  } catch (error: any) {
+    return {
+      configured: false,
+      statusPath,
+      running: false,
+      bridgeUrl,
+      launcher: getBackgroundLauncher(),
+      tmuxSession: getGeminiBridgeTmuxSession(),
       error: error?.message ?? 'status parse failed',
     };
   }
@@ -679,6 +1347,9 @@ async function runPipelineOneScripts(context: vscode.ExtensionContext): Promise<
     ...process.env,
     PIPELINE_01_STATE_DIR: stateDir,
     PIPELINE_01_STATUS_FILE: statusPath,
+    PIPELINE_01_CBF_LAUNCHER: getBackgroundLauncher(),
+    PIPELINE_01_CBF_TMUX_SESSION: getPipelineOneCbfTmuxSession(),
+    PIPELINE_01_CONTAINER_RUNTIME: getPipelineOneContainerRuntime(),
   };
 
   const bootstrap = await runProcess('/bin/bash', [bootstrapScript], path.dirname(bootstrapScript), 120000, pipelineEnv);
@@ -723,6 +1394,11 @@ async function runGeminiBridgeBootstrap(context: vscode.ExtensionContext): Promi
       '--port', port,
     ], {
       cwd: path.dirname(bootstrapScript),
+      env: {
+        ...process.env,
+        GEMINI_A2A_LAUNCHER: getBackgroundLauncher(),
+        GEMINI_A2A_TMUX_SESSION: getGeminiBridgeTmuxSession(),
+      },
     });
 
     let stdout = '';
@@ -781,6 +1457,7 @@ class VortexSidebarProvider implements vscode.WebviewViewProvider {
         preset: vscode.workspace.getConfiguration('vortex').get<string>('preset') ?? '渦',
         lastVerdict: lastAuditResult?.verdict || null,
         newgate: await fetchNewgateStatus(),
+        bridgeRuntime: await fetchBridgeRuntimeStatus(),
         kiQueue: await fetchKiQueueStatus(),
         pipelineOne: await fetchPipelineOneStatus(),
       };
@@ -823,6 +1500,7 @@ class VortexSidebarProvider implements vscode.WebviewViewProvider {
         preset: vscode.workspace.getConfiguration('vortex').get<string>('preset') ?? '渦',
         lastVerdict: lastAuditResult?.verdict || null,
         newgate: await fetchNewgateStatus(),
+        bridgeRuntime: await fetchBridgeRuntimeStatus(),
         kiQueue: await fetchKiQueueStatus(),
         pipelineOne: await fetchPipelineOneStatus(),
       };
@@ -844,23 +1522,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ── Commands ────────────────────────────────────────────────────────────
 
-  let julesPanel: vscode.WebviewPanel | undefined;
-
   context.subscriptions.push(
     vscode.commands.registerCommand('vortex.openAsyncTaskDashboard', async () => {
       if (julesPanel) {
         julesPanel.reveal(vscode.ViewColumn.One);
         return;
       }
-      
-      let token = '';
-      try {
-        const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: true });
-        token = session.accessToken;
-      } catch (err) {
+
+      const token = await getGitHubRepoToken(true);
+      if (!token) {
         vscode.window.showErrorMessage('GitHub Authentication is required to access Jules operations.');
         return;
       }
+      latestJulesToken = token;
 
       julesPanel = vscode.window.createWebviewPanel(
         'asyncTaskDashboard',
@@ -868,22 +1542,13 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.ViewColumn.One,
         { enableScripts: true, retainContextWhenHidden: true }
       );
+      julesPanelReady = false;
 
       const updateJulesView = async () => {
         if (!julesPanel) return;
         julesPanel.webview.html = getJulesHtml("Loading Jules Sessions from GitHub...", true);
         try {
-          // Fetch open issues mentioning jules involving the current user
-          const res = await (globalThis as any).fetch(`https://api.github.com/search/issues?q=involves:@me+"jules"+is:open+is:issue`, {
-            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' }
-          });
-          const data = await res.json() as any;
-          if (data.items) {
-             // Pass the raw JSON array to the dashboard parser instead of a CLI string
-             julesPanel.webview.html = getJulesHtml(JSON.stringify(data.items), false);
-          } else {
-             julesPanel.webview.html = getJulesHtml(`Error: ${JSON.stringify(data)}`, false);
-          }
+          await syncJulesIssues({ createSessionIfNeeded: true, resetPanel: true });
         } catch (err: any) {
           julesPanel.webview.html = getJulesHtml(`Error: ${err.message}`, false);
         }
@@ -922,11 +1587,14 @@ export function activate(context: vscode.ExtensionContext) {
           } catch (err: any) {
             vscode.window.showErrorMessage('Failed to send reply: ' + err.message);
           }
+        } else if (msg.command === 'openExternal' && typeof msg.url === 'string' && msg.url.trim()) {
+          await openExternalUrl(msg.url);
         }
       }, undefined, context.subscriptions);
 
       julesPanel.onDidDispose(() => {
         julesPanel = undefined;
+        julesPanelReady = false;
       }, null, context.subscriptions);
     }),
 
@@ -1029,6 +1697,8 @@ export function activate(context: vscode.ExtensionContext) {
       channel.appendLine(`workspaceRoot: ${getWorkspaceRoot()}`);
       channel.appendLine(`statusPath: ${getGeminiBridgeStatusPath()}`);
       channel.appendLine(`bridgeUrl: http://127.0.0.1:${getGeminiBridgePort()}`);
+      channel.appendLine(`launcher: ${getBackgroundLauncher()}`);
+      channel.appendLine(`tmuxSession: ${getGeminiBridgeTmuxSession()}`);
 
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: '🚀 Gemini Code Assist Bridge を起動中...' },
@@ -1089,6 +1759,9 @@ export function activate(context: vscode.ExtensionContext) {
       channel.appendLine('=== Pipeline 1: OSS -> Claude -> Gemini -> ECK ===');
       channel.appendLine(`repoPath: ${getPipelineOneRepoPath()}`);
       channel.appendLine(`statusPath: ${getPipelineOneStatusPath()}`);
+      channel.appendLine(`containerRuntime: ${getPipelineOneContainerRuntime()}`);
+      channel.appendLine(`cbfLauncher: ${getBackgroundLauncher()}`);
+      channel.appendLine(`cbfTmuxSession: ${getPipelineOneCbfTmuxSession()}`);
 
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: '🧬 Pipeline① を起動中...' },
@@ -1263,13 +1936,55 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Status bar
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('vortex.jules')) {
+        stopJulesPolling();
+        startJulesPolling();
+      }
+    })
+  );
+
+  // Status bar (now shows fleet health)
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.text = '$(shield) VORTEX';
   statusBar.tooltip = 'Click to run VORTEX audit';
   statusBar.command = 'vortex.runAudit';
   statusBar.show();
   context.subscriptions.push(statusBar);
+
+  // ── AI OS Subsystems ────────────────────────────────────────────────────
+
+  // Fleet Health Check (updates status bar with live 🟢/🔴 count)
+  startFleetHealthCheck(statusBar);
+
+  // State Streaming (sends editor state to Fusion Gate)
+  startStateStreaming();
+
+  // Action Server (receives commands from AI backends)
+  startActionServer();
+
+  // Jules worker lane (delay-aware GitHub issue / PR watcher)
+  startJulesPolling();
+
+  // Sovereign Memory Recall (auto-recall on activation)
+  const aiOsChannel = vscode.window.createOutputChannel('VORTEX AI OS');
+  void runSovereignMemoryRecall(aiOsChannel);
+
+  // Cleanup on dispose
+  context.subscriptions.push({
+    dispose: () => {
+      stopFleetHealthCheck();
+      stopStateStreaming();
+      stopActionServer();
+      stopJulesPolling();
+    },
+  });
 }
 
-export function deactivate() {}
+export function deactivate() {
+  stopFleetHealthCheck();
+  stopStateStreaming();
+  stopActionServer();
+  stopJulesPolling();
+}

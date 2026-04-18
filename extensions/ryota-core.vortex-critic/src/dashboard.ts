@@ -34,11 +34,12 @@ export function getDashboardHtml(extensionUri: vscode.Uri, logDir: string, getSt
     const successRate = total > 0 ? Math.round(((successCount + recoveryCount) / total) * 100) : 0;
     const status = getStatus();
     const newgate = status.newgate ?? {};
+    const bridgeRuntime = status.bridgeRuntime ?? {};
     const kiQueue = status.kiQueue ?? {};
     const pipelineOne = status.pipelineOne ?? {};
     const newgateConnected = Boolean(newgate.connected);
     const newgateBadgeClass = newgateConnected ? 'badge-success' : 'badge-failure';
-    const newgateBridgeLabel = newgate.bridgeUrl || 'not configured';
+    const newgateBridgeLabel = bridgeRuntime.note || bridgeRuntime.bridgeUrl || newgate.bridgeUrl || 'not configured';
     const kiNotebookBadgeClass = kiQueue.notebookExists ? 'badge-success' : 'badge-recovery';
     const kiNotebookLabel = kiQueue.notebookExists ? '準備完了' : '未設定';
     const pipelineOneStage = pipelineOne.stage || '未起動';
@@ -367,6 +368,14 @@ export function getDashboardHtml(extensionUri: vscode.Uri, logDir: string, getSt
                     <span style="float:right;">${newgate.version || '-'}</span>
                 </div>
                 <div style="margin-top: 10px;">
+                    <span style="color: var(--text-muted); font-size: 0.8em;">Launcher:</span>
+                    <span style="float:right;">${bridgeRuntime.launcher || '-'}</span>
+                </div>
+                <div style="margin-top: 10px;">
+                    <span style="color: var(--text-muted); font-size: 0.8em;">Session:</span>
+                    <span style="float:right;">${bridgeRuntime.tmuxSession || '-'}</span>
+                </div>
+                <div style="margin-top: 10px;">
                     <span style="color: var(--text-muted); font-size: 0.8em;">埋め込み:</span>
                     <span style="float:right;">${newgate.embeddingModel || '-'}</span>
                 </div>
@@ -434,6 +443,14 @@ export function getDashboardHtml(extensionUri: vscode.Uri, logDir: string, getSt
                     <span class="badge ${pipelineOneN8nBadge}" style="float:right;">${pipelineOne.n8nReady ? 'ready' : 'boot'}</span>
                 </div>
                 <div style="margin-top: 10px;">
+                    <span style="color: var(--text-muted); font-size: 0.8em;">Runtime:</span>
+                    <span style="float:right;">${pipelineOne.containerRuntime || '-'}</span>
+                </div>
+                <div style="margin-top: 10px;">
+                    <span style="color: var(--text-muted); font-size: 0.8em;">CBF起動:</span>
+                    <span style="float:right;">${pipelineOne.cbfLauncher || '-'}</span>
+                </div>
+                <div style="margin-top: 10px;">
                     <span style="color: var(--text-muted); font-size: 0.8em;">Packets:</span>
                     <span style="float:right;">${pipelineOne.packetCount ?? 0}</span>
                 </div>
@@ -448,6 +465,7 @@ export function getDashboardHtml(extensionUri: vscode.Uri, logDir: string, getSt
             </div>
             <div class="log-result" style="margin-top: 12px;">${pipelineOne.repoPath || 'repo 未設定'}</div>
             <div style="margin-top: 8px; color: var(--text-muted); font-size: 0.78em;">${pipelineOne.mountPath || 'mount 未設定'}</div>
+            <div style="margin-top: 6px; color: var(--text-muted); font-size: 0.75em;">docker context: ${pipelineOne.dockerContext || '-'}</div>
             ${pipelineOne.error ? `<div style="margin-top: 8px; color: var(--warning); font-size: 0.8em;">${pipelineOne.error}</div>` : ''}
             <div class="actions" style="margin-top: 12px;">
                 <button class="btn" onclick="postMessage('runPipelineOne')">▶ 開始</button>
@@ -575,6 +593,18 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
             color: var(--bg);
             box-shadow: 0 0 10px var(--primary);
         }
+        .btn:disabled {
+            opacity: 0.45;
+            cursor: default;
+            box-shadow: none;
+            background: transparent;
+            color: var(--text-muted);
+            border-color: var(--glass-border);
+        }
+        .btn-sm {
+            padding: 6px 10px;
+            font-size: 0.8em;
+        }
 
         .layout {
             display: flex;
@@ -641,10 +671,21 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
         .chat-header {
             padding: 15px 20px;
             border-bottom: 1px solid var(--glass-border);
-            font-weight: bold;
             background: rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .chat-header-title {
+            font-weight: bold;
             font-size: 1.1em;
             word-break: break-all;
+        }
+        .chat-header-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
         }
         .chat-history {
             flex: 1;
@@ -701,6 +742,16 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
             font-family: inherit;
             box-sizing: border-box;
         }
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        .hint {
+            color: var(--text-muted);
+            font-size: 0.8em;
+        }
         textarea:focus {
             outline: none;
             border-color: var(--primary);
@@ -733,9 +784,21 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
     <div class="layout" id="app-layout" style="` + ((isLoading || rawContentHtml) ? 'display: none;' : '') + `">
         <div class="sidebar" id="sidebar"></div>
         <div class="main-panel" id="main-panel">
-            <div class="chat-header" id="chat-header">Select an issue</div>
+            <div class="chat-header">
+                <div class="chat-header-title" id="chat-header">Select an issue</div>
+                <div class="chat-header-actions">
+                    <button class="btn btn-sm" id="open-issue-btn" disabled>Open Issue</button>
+                    <button class="btn btn-sm" id="open-pr-btn" disabled>Open Linked PR</button>
+                </div>
+            </div>
             <div class="chat-history" id="chat-history"></div>
             <div class="chat-input" id="chat-input-container">
+                <div class="quick-actions">
+                    <button class="btn btn-sm" data-template="implementPr">Implement + PR</button>
+                    <button class="btn btn-sm" data-template="reviewFix">Review 対応</button>
+                    <button class="btn btn-sm" data-template="pushRetry">Push / Sync Retry</button>
+                </div>
+                <div class="hint">Jules は非同期 worker です。数十秒〜数分の遅延を前提に、Issue / PR / コメントを往復します。</div>
                 <textarea id="reply-box" placeholder="Type your reply to Jules..."></textarea>
                 <div class="chat-actions">
                     <button class="btn" id="send-btn">Send Reply</button>
@@ -748,6 +811,7 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
         const vscode = acquireVsCodeApi();
         const issues = ` + initialData + `;
         let activeIssue = null;
+        let activeComments = [];
 
         function timeAgo(dateString) {
             const date = new Date(dateString);
@@ -775,6 +839,7 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
             issues.forEach(issue => {
                 const el = document.createElement('div');
                 el.className = 'issue-item';
+                el.dataset.issueId = String(issue.id);
                 
                 // Try to infer status from labels
                 let isAwaiting = false;
@@ -801,6 +866,7 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
 
         function selectIssue(issue, element) {
             activeIssue = issue;
+            activeComments = [];
             document.querySelectorAll('.issue-item').forEach(el => el.classList.remove('active'));
             if (element) element.classList.add('active');
 
@@ -810,6 +876,7 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
             document.getElementById('chat-header').textContent = issue.title;
             const history = document.getElementById('chat-history');
             history.innerHTML = '<div class="loader">Loading conversation...</div>';
+            updateLinkButtons();
 
             // Request comments from the extension (authenticated fetch)
             vscode.postMessage({
@@ -822,6 +889,7 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
         function renderComments(comments) {
             const history = document.getElementById('chat-history');
             history.innerHTML = '';
+            activeComments = Array.isArray(comments) ? comments.slice() : [];
 
             // Add original issue body
             if (activeIssue && activeIssue.body) {
@@ -852,6 +920,47 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
 
             // Scroll to bottom
             history.scrollTop = history.scrollHeight;
+            updateLinkButtons();
+        }
+
+        function extractPullUrls(text) {
+            if (!text) return [];
+            const matches = String(text).match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/g) || [];
+            return [...new Set(matches)];
+        }
+
+        function getPrimaryPullUrl() {
+            const urls = [];
+            if (activeIssue && activeIssue.body) {
+                urls.push(...extractPullUrls(activeIssue.body));
+            }
+            activeComments.forEach(comment => {
+                urls.push(...extractPullUrls(comment.body));
+            });
+            return [...new Set(urls)][0] || null;
+        }
+
+        function updateLinkButtons() {
+            const issueBtn = document.getElementById('open-issue-btn');
+            const prBtn = document.getElementById('open-pr-btn');
+            if (issueBtn) {
+                issueBtn.disabled = !(activeIssue && activeIssue.html_url);
+            }
+            const prUrl = getPrimaryPullUrl();
+            if (prBtn) {
+                prBtn.disabled = !prUrl;
+            }
+        }
+
+        function prefillReply(kind) {
+            const box = document.getElementById('reply-box');
+            const templates = {
+                implementPr: 'Jules, please implement the requested changes on your working branch, run the relevant checks, push the branch, and open or update the PR. If you are blocked, comment with the exact blocker and the next command you need.',
+                reviewFix: 'Jules, please address the latest review feedback, rerun the relevant checks, push the updated branch, and summarize the exact diff in your next comment.',
+                pushRetry: 'Jules, please sync with the latest base branch, retry the push / PR update flow, and report whether the PR is ready or still blocked.'
+            };
+            box.value = templates[kind] || '';
+            box.focus();
         }
         
         function escapeHtml(unsafe) {
@@ -881,6 +990,23 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
             document.getElementById('send-btn').textContent = 'Sending...';
         });
 
+        document.getElementById('open-issue-btn').addEventListener('click', () => {
+            if (activeIssue && activeIssue.html_url) {
+                vscode.postMessage({ command: 'openExternal', url: activeIssue.html_url });
+            }
+        });
+
+        document.getElementById('open-pr-btn').addEventListener('click', () => {
+            const prUrl = getPrimaryPullUrl();
+            if (prUrl) {
+                vscode.postMessage({ command: 'openExternal', url: prUrl });
+            }
+        });
+
+        document.querySelectorAll('[data-template]').forEach((button) => {
+            button.addEventListener('click', () => prefillReply(button.dataset.template));
+        });
+
         window.addEventListener('message', event => {
             const msg = event.data;
             if (msg.command === 'renderComments' && activeIssue && activeIssue.id === msg.issueId) {
@@ -889,6 +1015,21 @@ export function getJulesHtml(content: string, isLoading: boolean): string {
                 if (activeIssue && activeIssue.id === msg.issueId) {
                     document.getElementById('send-btn').textContent = 'Send Reply';
                     selectIssue(activeIssue, document.querySelector('.issue-item.active'));
+                }
+            } else if (msg.command === 'replaceIssues' && Array.isArray(msg.issues)) {
+                issues.splice(0, issues.length, ...msg.issues);
+                renderSidebar();
+                if (activeIssue) {
+                    const updated = issues.find(issue => issue.id === activeIssue.id);
+                    if (updated) {
+                        const activeEl = document.querySelector('[data-issue-id="' + updated.id + '"]');
+                        selectIssue(updated, activeEl);
+                    } else {
+                        activeIssue = null;
+                        activeComments = [];
+                        document.getElementById('main-panel').style.display = 'none';
+                        updateLinkButtons();
+                    }
                 }
             }
         });

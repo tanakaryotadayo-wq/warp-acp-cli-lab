@@ -12,6 +12,7 @@ Multi-provider AI レーン拡張機能 for VS Code / Antigravity
 │  ├─ KI Queue / 昇格 / Colab Notebook                         │
 │  ├─ Pipeline① 起動・監視                                      │
 │  ├─ Gemini Bridge 起動・監視                                   │
+│  ├─ Jules worker dashboard / poll / notify                    │
 │  └─ Antigravity Packet 抽出                                   │
 ├──────────────────────────────────────────────────────────────┤
 │  Memory Pipeline  ─  memory_pipeline.py (Python)             │
@@ -70,6 +71,18 @@ vortex-critic/
 ├── tsconfig.json
 └── README.md               # ← このファイル
 ```
+
+## README Index
+
+| Path | 内容 |
+|------|------|
+| `docs/README.md` | VORTEX 複合モジュール全体の定義書 |
+| `docs/extension.md` | VS Code 拡張シェル / UI / command dispatcher |
+| `docs/critic.md` | DeepSeek / VORTEX critic モジュール |
+| `docs/gemini.md` | Gemini A2A bridge / memory pipeline モジュール |
+| `docs/pipeline.md` | Pipeline① モジュール |
+| `docs/mcp-server.md` | 外部 Fusion Orchestrator v2 MCP モジュール |
+| `docs/contracts/README.md` | 厳密な入出力契約の索引 |
 
 ## 設計詳細
 
@@ -154,6 +167,23 @@ PCC + CBF プロトコル注入
 - bootstrap → rclone mount → n8n → harvest → audit
 - ゼロパケット時は fail-closed (`--allow-empty-packets` で明示オーバーライド)
 - status.json で VORTEX サイドバーに進捗表示
+
+### 8. Jules Worker Workflow
+
+Jules は **push 代行を含む remote worker lane** として扱います。  
+VORTEX 側の役割は、Issue / PR / reply の operator 面を持ち、時間差のある進行を poll + notify で回すことです。
+
+- 監視面: `vortex.openAsyncTaskDashboard`
+- poll: `vortex.jules.enablePolling`, `vortex.jules.pollInterval`
+- 通知: feedback待ち / linked PR / active queue からの消滅
+- UI導線:
+  - `Open Issue`
+  - `Open Linked PR`
+  - `Implement + PR`
+  - `Review 対応`
+  - `Push / Sync Retry`
+
+つまり、**ローカル runtime が truth、Jules は async implementation / PR worker** です。
 
 ## データパス
 
