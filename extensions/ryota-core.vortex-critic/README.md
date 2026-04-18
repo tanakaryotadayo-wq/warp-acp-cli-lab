@@ -170,6 +170,15 @@ PCC + CBF プロトコル注入
 - bootstrap → rclone mount → n8n → harvest → audit
 - ゼロパケット時は fail-closed (`--allow-empty-packets` で明示オーバーライド)
 - status.json で VORTEX サイドバーに進捗表示
+- `post-commit` hook → queue → worker の commit-driven 実行が可能
+
+commit-driven 運用ルール:
+
+1. agent は commit まで進める  
+2. `post-commit` hook が pipeline queue に自動投入する  
+3. agent 自身は待ちぼうけしない  
+4. worker が clean snapshot (`git archive <sha>`) を使って Pipeline① を実行する  
+5. follow-up は GitHub issue として publish できる  
 
 ### 8. Jules Worker Workflow
 
