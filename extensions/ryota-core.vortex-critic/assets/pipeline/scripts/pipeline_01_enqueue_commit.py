@@ -15,9 +15,6 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
-DEFAULT_STATE_DIR = ROOT / "data" / "pipeline_01"
-DEFAULT_QUEUE_FILE = DEFAULT_STATE_DIR / "commit_queue.jsonl"
-DEFAULT_WORKER_LOG = DEFAULT_STATE_DIR / "commit_queue_worker.log"
 DEFAULT_WORKER_SESSION = "vortex-pipeline-queue"
 DEFAULT_LAUNCHER = os.environ.get("PIPELINE_01_QUEUE_LAUNCHER", "tmux")
 DEFAULT_POLL_INTERVAL = int(os.environ.get("PIPELINE_01_QUEUE_POLL_INTERVAL", "15"))
@@ -32,16 +29,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Enqueue the latest commit for Pipeline① processing.")
     parser.add_argument("--repo-root", default=str(Path.cwd()))
     parser.add_argument("--commit", default="")
-    parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
-    parser.add_argument("--queue-file", default=str(DEFAULT_QUEUE_FILE))
+    parser.add_argument("--state-dir", default="")
+    parser.add_argument("--queue-file", default="")
     parser.add_argument("--worker-session", default=DEFAULT_WORKER_SESSION)
-    parser.add_argument("--worker-log", default=str(DEFAULT_WORKER_LOG))
+    parser.add_argument("--worker-log", default="")
     parser.add_argument("--poll-interval", type=int, default=DEFAULT_POLL_INTERVAL)
     parser.add_argument("--launcher", choices=["tmux", "subprocess"], default=DEFAULT_LAUNCHER if DEFAULT_LAUNCHER in {"tmux", "subprocess"} else "tmux")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--publish-issue", dest="publish_issue", action="store_true", default=True)
     parser.add_argument("--no-publish-issue", dest="publish_issue", action="store_false")
     return parser.parse_args()
+
+
+def default_state_dir(repo_root: Path) -> Path:
+    return repo_root / ".build" / "ryota" / "pipeline_01"
 
 
 def run_git(repo_root: Path, *args: str) -> str:
@@ -181,7 +182,30 @@ def shutil_which(binary: str) -> str | None:
 def main() -> int:
     args = parse_args()
     repo_root = Path(args.repo_root).expanduser().resolve()
-    queue_file = Path(args.queue_file).expanduser().resolve()
+
+    if args.queue_file.strip():
+        queue_file = Path(args.queue_file).expanduser().resolve()
+    else:
+        queue_file = None
+
+    if args.state_dir.strip():
+        state_dir = Path(args.state_dir).expanduser().resolve()
+    elif queue_file is not None:
+        state_dir = queue_file.parent
+    else:
+        state_dir = default_state_dir(repo_root)
+
+    if queue_file is None:
+        queue_file = state_dir / "commit_queue.jsonl"
+
+    if args.worker_log.strip():
+        worker_log = Path(args.worker_log).expanduser().resolve()
+    else:
+        worker_log = state_dir / "commit_queue_worker.log"
+
+    args.state_dir = str(state_dir)
+    args.queue_file = str(queue_file)
+    args.worker_log = str(worker_log)
     queue_file.parent.mkdir(parents=True, exist_ok=True)
 
     commit_sha = args.commit.strip()
