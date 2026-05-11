@@ -6,6 +6,9 @@ WORKSPACE_ROOT=""
 STATUS_FILE=""
 HOST="${GEMINI_A2A_HOST:-127.0.0.1}"
 PORT="${GEMINI_A2A_PORT:-8765}"
+LAUNCHER="${GEMINI_A2A_LAUNCHER:-tmux}"
+TMUX_SESSION="${GEMINI_A2A_TMUX_SESSION:-vortex-gemini-bridge}"
+TMUX_BIN="$(command -v tmux || true)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +26,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port)
       PORT="$2"
+      shift 2
+      ;;
+    --launcher)
+      LAUNCHER="$2"
+      shift 2
+      ;;
+    --tmux-session)
+      TMUX_SESSION="$2"
       shift 2
       ;;
     *)
@@ -52,12 +63,20 @@ check_bridge() {
   curl -sf "${BRIDGE_URL}/newgate/profile" >/dev/null 2>&1
 }
 
+tmux_session_exists() {
+  [ -n "$TMUX_BIN" ] && "$TMUX_BIN" has-session -t "$TMUX_SESSION" >/dev/null 2>&1
+}
+
 write_status() {
   local running_flag="$1"
   local note="$2"
   local running_py="False"
+  local tmux_available_py="False"
   if [ "$running_flag" = true ]; then
     running_py="True"
+  fi
+  if [ -n "$TMUX_BIN" ]; then
+    tmux_available_py="True"
   fi
   python3 <<PYEOF
 import json
@@ -75,6 +94,9 @@ status = {
     "geminiSetting": "geminicodeassist.a2a.address",
     "host": "${HOST}",
     "port": int("${PORT}"),
+    "launcher": "${ACTUAL_LAUNCHER}",
+    "tmuxSession": "${TMUX_SESSION}",
+    "tmuxAvailable": ${tmux_available_py},
     "note": "${note}",
 }
 
@@ -87,6 +109,7 @@ PYEOF
 
 note="bridge already running"
 running=false
+ACTUAL_LAUNCHER="$LAUNCHER"
 if check_bridge; then
   running=true
 else
@@ -94,14 +117,36 @@ else
   : "${GEMINI_A2A_FUSION_GATE_ALLOW_FAILOVER:=false}"
   : "${GEMINI_A2A_FUSION_GATE_FALLBACK:=false}"
 
-  nohup env \
-    GEMINI_A2A_USE_FUSION_GATE="$GEMINI_A2A_USE_FUSION_GATE" \
-    GEMINI_A2A_FUSION_GATE_ALLOW_FAILOVER="$GEMINI_A2A_FUSION_GATE_ALLOW_FAILOVER" \
-    GEMINI_A2A_FUSION_GATE_FALLBACK="$GEMINI_A2A_FUSION_GATE_FALLBACK" \
-    python3 "$BRIDGE_SCRIPT" --host "$HOST" --port "$PORT" \
-    >"$LOG_FILE" 2>&1 &
-  echo "$!" > "$PID_FILE"
-  note="bridge started"
+  if [ "$LAUNCHER" = "tmux" ] && [ -n "$TMUX_BIN" ]; then
+    : > "$LOG_FILE"
+    rm -f "$PID_FILE"
+    if tmux_session_exists; then
+      "$TMUX_BIN" kill-session -t "$TMUX_SESSION" >/dev/null 2>&1 || true
+    fi
+    quoted_script_dir=$(printf '%q' "$SCRIPT_DIR")
+    quoted_bridge_script=$(printf '%q' "$BRIDGE_SCRIPT")
+    quoted_host=$(printf '%q' "$HOST")
+    quoted_port=$(printf '%q' "$PORT")
+    quoted_log_file=$(printf '%q' "$LOG_FILE")
+    tmux_command="cd ${quoted_script_dir} && exec env GEMINI_A2A_USE_FUSION_GATE=${GEMINI_A2A_USE_FUSION_GATE} GEMINI_A2A_FUSION_GATE_ALLOW_FAILOVER=${GEMINI_A2A_FUSION_GATE_ALLOW_FAILOVER} GEMINI_A2A_FUSION_GATE_FALLBACK=${GEMINI_A2A_FUSION_GATE_FALLBACK} python3 ${quoted_bridge_script} --host ${quoted_host} --port ${quoted_port} >>${quoted_log_file} 2>&1"
+    "$TMUX_BIN" new-session -d -s "$TMUX_SESSION" "$tmux_command"
+    ACTUAL_LAUNCHER="tmux"
+    note="bridge started in tmux session ${TMUX_SESSION}"
+  else
+    nohup env \
+      GEMINI_A2A_USE_FUSION_GATE="$GEMINI_A2A_USE_FUSION_GATE" \
+      GEMINI_A2A_FUSION_GATE_ALLOW_FAILOVER="$GEMINI_A2A_FUSION_GATE_ALLOW_FAILOVER" \
+      GEMINI_A2A_FUSION_GATE_FALLBACK="$GEMINI_A2A_FUSION_GATE_FALLBACK" \
+      python3 "$BRIDGE_SCRIPT" --host "$HOST" --port "$PORT" \
+      >"$LOG_FILE" 2>&1 &
+    echo "$!" > "$PID_FILE"
+    ACTUAL_LAUNCHER="subprocess"
+    if [ "$LAUNCHER" = "tmux" ]; then
+      note="tmux unavailable; bridge started as subprocess"
+    else
+      note="bridge started as subprocess"
+    fi
+  fi
 
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     if check_bridge; then
